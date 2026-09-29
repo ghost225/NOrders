@@ -65,6 +65,10 @@ namespace NOrders
         // its own flying speed.
         private float CruiseThrottle()
         {
+            // Speed before economy: an airframe that cannot hold well above its
+            // corner speed at cruise power gets full power (and the burner).
+            float corner = parameters != null ? parameters.cornerSpeed : 0f;
+            if (corner > 0f && aircraft.speed < corner * 1.3f) return 1f;
             float cruise = Tuning.CruiseThrottle;
             if (!Wings.HasFollowers(flight)) return cruise;
             float lead = cruise - 0.05f;
