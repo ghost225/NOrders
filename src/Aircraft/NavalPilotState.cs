@@ -384,39 +384,26 @@ namespace NOrders
             Unit target = flight.Target;
             if (target == null || target.disabled) { FlyOrbit(aircraft.GlobalPosition()); return; }
 
-            // Jam from as far off as the pods still work: a station on our
-            // side of the targets, at the pods' reach less the targets' own
-            // spread, so every one of them stays inside it -- worked in a
-            // small orbit there, rather than circling the target at a fixed
-            // distance, which took the aircraft round the enemy's side.
-            Vector3 centre = Vector3.zero;
-            int count = 0;
-            foreach (Unit unit in flight.JamTargets)
-                if (unit != null && !unit.disabled) { centre += unit.transform.position; count++; }
-            if (count == 0) { centre = target.transform.position; count = 1; }
-            else centre /= count;
-            float spread = 0f;
-            foreach (Unit unit in flight.JamTargets)
-                if (unit != null && !unit.disabled) spread = Mathf.Max(spread, Vector3.Distance(unit.transform.position, centre));
-
-            float reach = MissileJamming.Reach(aircraft);
-            if (reach <= 0f) reach = Mathf.Max(Tuning.JammingStandoff, 1000f);
-            float standoff = Mathf.Max(reach * 0.9f - spread, 2000f);
-            Vector3 friendly = (flight.Home != null ? flight.HomePosition.ToLocalPosition() : aircraft.transform.position) - centre;
-            friendly.y = 0f;
-            if (friendly.sqrMagnitude < 1f) friendly = aircraft.transform.position - centre;
-            friendly.y = 0f;
-            Vector3 station = centre + friendly.normalized * standoff;
-
-            float radius = flight.OrbitRadius;
-            flight.OrbitRadius = Mathf.Clamp(reach * 0.1f, 1500f, 4000f);
-            FlyOrbit(station.ToGlobalPosition());
-            flight.OrbitRadius = radius;
+            // The flight's own task area, flown at its ordered height, if the
+            // pods reach every target from all of it; if not, the area moves
+            // -- as far back on our side as still keeps every target in reach
+            // from anywhere on its orbit. Too spread for one area to reach
+            // them all, it covers as many as it can in priority order; the
+            // rest get what reaches them.
+            GlobalPosition was = flight.OrbitCentre;
+            if (!JamPlanner.CurrentCovers(flight) && JamPlanner.MoveToIdeal(flight) &&
+                FastMath.Distance(was, flight.OrbitCentre) > 500f && Time.timeSinceLevelLoad >= nextJamAreaNote)
+            {
+                nextJamAreaNote = Time.timeSinceLevelLoad + 30f;
+                Host.Say(flight.Name + " · jamming area moved to keep its targets in reach");
+            }
+            FlyOrbit(flight.OrbitCentre);
 
             // The pods themselves are aimed by MissileJamming: each task
             // target a pod, and missiles fired at us taken first.
         }
 
+        private float nextJamAreaNote;
         private void FlyStation()
         {
             Ship ship = flight.StationAnchor;

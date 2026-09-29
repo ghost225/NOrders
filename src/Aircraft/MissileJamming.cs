@@ -171,8 +171,9 @@ namespace NOrders
 
                 Inbound(aircraft, pods[0].Station, inbound);
                 tasks.Clear();
-                if (flight.Mode == FlightMode.Jam)
-                    foreach (Unit unit in flight.JamTargets) if (unit != null && !unit.disabled) tasks.Add(unit);
+                flight.JamTargets.RemoveAll(u => u == null || u.disabled);
+                if (FlightOrders.KeepsJamming(flight.Mode))
+                    foreach (Unit unit in flight.JamTargets) tasks.Add(unit);
 
                 // Missiles from the last pod back; the rest on the task.
                 int onMissiles = Mathf.Min(inbound.Count, pods.Count);

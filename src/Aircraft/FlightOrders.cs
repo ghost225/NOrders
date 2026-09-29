@@ -265,8 +265,12 @@ namespace NOrders
         public string Describe()
         {
             string now = Status;
-            if (now != null) return now + " · " + Task();
-            return Task();
+            string task = Task();
+            // Jamming carried through a strike: say so.
+            if (Mode != FlightMode.Jam && JamTargets.Count > 0 && FlightOrders.KeepsJamming(Mode))
+                task += " · jamming " + JamTargets.Count;
+            if (now != null) return now + " · " + task;
+            return task;
         }
 
         private string Task()
@@ -864,9 +868,23 @@ namespace NOrders
 
         // ---- orders --------------------------------------------------------
 
+        // Still jamming through a strike or weapons free, and back to it after;
+        // an order that sends the flight somewhere else ends it.
+        internal static bool KeepsJamming(FlightMode mode) =>
+            mode == FlightMode.Jam || mode == FlightMode.Strike || mode == FlightMode.Egress || mode == FlightMode.Engage;
+
+        public static void StopJamming(Flight flight)
+        {
+            if (flight == null) return;
+            flight.JamTargets.Clear();
+            if (flight.Mode == FlightMode.Jam) { flight.Mode = FlightMode.Orbit; flight.Adopted = false; }
+            if (flight.PreviousMode == FlightMode.Jam) flight.PreviousMode = FlightMode.Orbit;
+        }
+
         public static void SetRoute(Flight flight, GlobalPosition point, bool append)
         {
             if (flight == null) return;
+            StopJamming(flight);
             if (!append) flight.Route.Clear();
             flight.Route.Add(point);
             flight.Mode = FlightMode.Route;
@@ -890,6 +908,10 @@ namespace NOrders
             flight.OrbitCentre = centre;
             flight.OrbitRadius = Mathf.Clamp(radius, 500f, 60000f);
             flight.Route.Clear();
+            // Jamming, an area moves where it jams from rather than ending it --
+            // used if every target is in reach from all of it, moved if not.
+            if (flight.Mode == FlightMode.Jam) return;
+            flight.JamTargets.Clear();
             flight.Mode = FlightMode.Orbit;
         }
 
@@ -911,6 +933,7 @@ namespace NOrders
         public static void Station(Flight flight, Ship on = null)
         {
             if (flight == null || (flight.Home == null && on == null)) return;
+            StopJamming(flight);
             flight.StationShip = on;
             flight.Route.Clear();
             // Abeam and slightly ahead: clear of the ship, still close aboard.
@@ -1086,6 +1109,7 @@ namespace NOrders
                 Host.Say(flight.Name + " · cannot fly a delivery; it has no hover");
                 return;
             }
+            StopJamming(flight);
             if (flight.Mode != FlightMode.Cargo) flight.PreviousMode = flight.Mode;
             flight.CargoPoint = where;
             flight.Airdrop = airdrop;
@@ -1460,6 +1484,7 @@ namespace NOrders
         public static void ReturnToBase(Flight flight)
         {
             if (flight == null) return;
+            flight.JamTargets.Clear();
             // Round the missiles first, if the host mod knows a way.
             if (flight.HomingVia == null && flight.Aircraft != null && !flight.Aircraft.disabled)
             {
