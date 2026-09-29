@@ -36,10 +36,15 @@ namespace NOrders
             { reason = "Another mod (" + Ownership.OwnerOf(ship) + ") is commanding this ship."; return false; }
             if (!MissionManager.IsRunning || ship.disabled || !ship.gameObject.activeInHierarchy)
             { reason = "This ship is not available in a running mission."; return false; }
-            if (!GameManager.GetLocalPlayer<Player>(out var player) || player == null)
-            { reason = "A local player is required."; return false; }
-            if (!HasPermission(ship, player))
-            { reason = player.HQ != null ? "You can command only your own faction's ships." : "Command authority is required."; return false; }
+            bool factionCommand = false;
+            try { factionCommand = ship.NetworkHQ != null && Host.CommandsFaction(ship.NetworkHQ); } catch { }
+            if (!factionCommand)
+            {
+                if (!GameManager.GetLocalPlayer<Player>(out var player) || player == null)
+                { reason = "A local player is required."; return false; }
+                if (!HasPermission(ship, player))
+                { reason = player.HQ != null ? "You can command only your own faction's ships." : "Command authority is required."; return false; }
+            }
             // Orders mutate simulation state, so they belong to whoever owns it.
             if (!ship.IsServer || !ship.LocalSim)
             { reason = "Ship commands require the mission host."; return false; }

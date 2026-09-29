@@ -56,5 +56,11 @@ namespace NOrders
         // patrol that chased every hostile in range flew into a fleet's air
         // defences for a run's worth of losses.
         public static Func<Flight, Unit, bool> AvoidEngaging = (_, __) => false;
+
+        // Whether this host commands a whole faction's ships as an AI (High
+        // Command), rather than the local player's own. Ships of such a
+        // faction can be ordered without the player's permission, and what
+        // is bought for them is paid from the faction's funds.
+        public static Func<FactionHQ, bool> CommandsFaction = _ => false;
     }
 }

@@ -145,15 +145,27 @@ namespace NOrders
             WellDeck deck = Deck(ship);
             if (deck == null) { reason = "This ship has no well deck."; return false; }
             if (!CommandableShip.CanCommand(ship, out reason)) return false;
-            if (!GameManager.GetLocalPlayer<NuclearOption.Networking.Player>(out var player) || player == null)
-            { reason = "A local player is required."; return false; }
             float cost = Price(type) * count;
-            if (player.Allocation < cost)
-            { reason = "Not enough allocation · " + count + " × " + type.unitName + " costs " + cost.ToString("0"); return false; }
-            player.AddAllocation(-cost);
+            bool faction = false;
+            try { faction = ship.NetworkHQ != null && Host.CommandsFaction(ship.NetworkHQ) && !Host.PlayerDirected; } catch { }
+            if (faction)
+            {
+                // An AI commander's purchase: the faction pays.
+                if (ship.NetworkHQ.factionFunds < cost)
+                { reason = "Not enough faction funds · " + count + " × " + type.unitName + " costs " + cost.ToString("0"); return false; }
+                ship.NetworkHQ.AddFunds(-cost);
+            }
+            else
+            {
+                if (!GameManager.GetLocalPlayer<NuclearOption.Networking.Player>(out var player) || player == null)
+                { reason = "A local player is required."; return false; }
+                if (player.Allocation < cost)
+                { reason = "Not enough allocation · " + count + " × " + type.unitName + " costs " + cost.ToString("0"); return false; }
+                player.AddAllocation(-cost);
+            }
             deck.Hold.AddOrRemoveUnit(type, count);
             bought.Add(ship);
-            reason = count + " × " + type.unitName + " into the hold · " + cost.ToString("0") + " from your allocation";
+            reason = count + " × " + type.unitName + " into the hold · " + cost.ToString("0") + (faction ? " from faction funds" : " from your allocation");
             Host.LogInfo("[amphib] " + ShipNames.Of(ship) + ": " + reason);
             return true;
         }
