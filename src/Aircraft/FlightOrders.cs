@@ -76,6 +76,8 @@ namespace NOrders
         // A heat-seeker inbound and the flight not on a run-in or in a fight
         // the native pilot is flying: our state flies the beam turn.
         public bool EvadingInfrared => Threat == FlightThreat.Missile && ThreatIsInfrared && ThreatMissile != null && !ThreatMissile.disabled;
+        // A radar shot inbound and our state keeping the aircraft: beam, chaff, descend.
+        public bool EvadingRadar => Tuning.OwnRadarEvasion && Threat == FlightThreat.Missile && !ThreatIsInfrared && ThreatMissile != null && !ThreatMissile.disabled;
         public float NextFlare;
         public float NextPreFlare;
         public int FlaresThisShot;
@@ -1461,11 +1463,11 @@ namespace NOrders
             // a radar shot is evaded, but a heat-seeker is flared off without
             // leaving the run -- breaking away throws the attack away.
             if (flight.Mode == FlightMode.Strike)
-                return flight.RunInDone || (flight.Threat == FlightThreat.Missile && !flight.ThreatIsInfrared);
+                return flight.RunInDone || (flight.Threat == FlightThreat.Missile && !flight.ThreatIsInfrared && !Tuning.OwnRadarEvasion);
             if (flight.Mode == FlightMode.Engage) return true;
             if (flight.Mode == FlightMode.Cargo) return false;       // the transport state has it
             // Jamming holds station; only an actual shot takes it off the job.
-            if (flight.Mode == FlightMode.Jam) return flight.Threat == FlightThreat.Missile;
+            if (flight.Mode == FlightMode.Jam) return flight.Threat == FlightThreat.Missile && !flight.ThreatIsInfrared && !Tuning.OwnRadarEvasion;
 
             // Leaving outranks evading, up to a point. Turning to fight a shot
             // that is still thirty kilometres away just keeps the aircraft in
@@ -1476,14 +1478,14 @@ namespace NOrders
             if (flight.Mode == FlightMode.Egress)
             {
                 if (flight.Threat != FlightThreat.Missile) return false;
-                if (flight.ThreatIsInfrared) return false;           // flown off on the beam by our state
+                if (flight.ThreatIsInfrared || Tuning.OwnRadarEvasion) return false;   // flown off on the beam by our state
                 return flight.ThreatRange <= Tuning.RadarHandover;
             }
 
             // Evasion is never a choice: being shot at overrides Weapons Hold.
             // A radar shot goes to the native pilot, who notches and dives; a
             // heat-seeker is ours: idle, beam, flares (see IrDefence).
-            if (flight.Threat == FlightThreat.Missile) return !flight.ThreatIsInfrared;
+            if (flight.Threat == FlightThreat.Missile) return !flight.ThreatIsInfrared && !Tuning.OwnRadarEvasion;
             if (flight.Roe == FlightRoe.Hold) return false;
             return flight.Threat == FlightThreat.Hostile;
         }

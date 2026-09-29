@@ -29,6 +29,11 @@ namespace NOrders
         public static float IrBurstRange = 3000f;
         public static int IrBurstFlares = 4;
         public static float IrBurstPause = 1.5f;      // between strings while the shot keeps coming
+        // Radar shots flown off by our own state (beam, chaff, a gentle descent
+        // at full power) instead of the native pilot's dive to the deck, which
+        // put heavy airframes into the sea and handed them back stalled.
+        public static bool OwnRadarEvasion = true;
+        public static float RadarEvasionFloor = 250f;   // metres above ground the descent stops at
         public static bool PreFlare = true;
         public static float PreFlareInterval = 2f;
         public static float FlareReserve = 0.3f;

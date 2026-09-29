@@ -178,9 +178,23 @@ namespace NOrders
             if (flight.EvadingInfrared && flight.Mode != FlightMode.Strike)
             {
                 if (aircraft.autopilot is AutopilotPlane) controlInputs.throttle = IrDefence.EvasionThrottle(aircraft);
-                FlyBeam(flight.ThreatMissile);
+                FlyBeam(flight.ThreatMissile, false);
                 return;
             }
+
+            // A radar shot: full power, the shot on the beam (a Doppler seeker
+            // sees the least closing speed there), chaff in bursts, and a
+            // gentle descent toward the floor -- not the native pilot's dive
+            // to ten metres, which put loaded fighters into the sea.
+            if (flight.EvadingRadar && aircraft.autopilot is AutopilotPlane)
+            {
+                controlInputs.throttle = 1f;
+                Reheat();
+                Chaff(flight.ThreatMissile);
+                FlyBeam(flight.ThreatMissile, true);
+                return;
+            }
+            if (chaffOffAt > 0f && Time.timeSinceLevelLoad >= chaffOffAt) { aircraft.Countermeasures(false, aircraft.countermeasureManager.activeIndex); chaffOffAt = -1f; }
 
             // A lead whose wing is still forming up circles where it is until
             // they have joined, rather than leaving them behind.
@@ -354,7 +368,25 @@ namespace NOrders
         // left fighters wallowing at eighty metres a second). From abeam
         // the seeker sees the flares well apart from the aircraft and the
         // engines at their coolest aspect.
-        private void FlyBeam(Missile missile)
+        private float nextChaff, chaffOffAt = -1f;
+
+        // Chaff against a radar shot: the station the game picks for the
+        // seeker type, fired in short bursts.
+        private void Chaff(Missile missile)
+        {
+            CountermeasureManager cm = aircraft.countermeasureManager;
+            if (cm == null || missile == null) return;
+            float now = Time.timeSinceLevelLoad;
+            if (chaffOffAt > 0f && now >= chaffOffAt) { aircraft.Countermeasures(false, cm.activeIndex); chaffOffAt = -1f; }
+            if (now < nextChaff) return;
+            nextChaff = now + 1.2f;
+            string kind = cm.ChooseCountermeasure(missile);
+            if (string.IsNullOrEmpty(kind) || kind == "IR") return;
+            aircraft.Countermeasures(true, cm.activeIndex);
+            chaffOffAt = now + 0.15f;
+        }
+
+        private void FlyBeam(Missile missile, bool descend)
         {
             Vector3 toMissile = Flat(missile.transform.position - aircraft.transform.position);
             if (toMissile.sqrMagnitude < 1f) toMissile = Flat(-aircraft.transform.forward);
@@ -363,8 +395,10 @@ namespace NOrders
             Vector3 forward = Flat(aircraft.transform.forward);
             Vector3 beam = Vector3.Dot(forward, left) >= 0f ? left : -left;
             float ordered = flight.Altitude;
-            flight.Altitude = Mathf.Max(Mathf.Min(aircraft.radarAlt, ordered), MinimumClearance);
-            Steer(aircraft.GlobalPosition() + beam * 4000f, default, 60f);
+            flight.Altitude = descend
+                ? Mathf.Max(Mathf.Min(aircraft.radarAlt * 0.7f, ordered), Tuning.RadarEvasionFloor)
+                : Mathf.Max(Mathf.Min(aircraft.radarAlt, ordered), MinimumClearance);
+            Steer(aircraft.GlobalPosition() + beam * 4000f, default, Mathf.Min(60f, SafeBank()));
             flight.Altitude = ordered;
         }
 
