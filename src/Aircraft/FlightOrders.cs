@@ -1229,7 +1229,7 @@ namespace NOrders
             int count = 0;
             if (aircraft?.weaponStations == null) return 0;
             foreach (WeaponStation station in aircraft.weaponStations)
-                if (station != null && (station.Cargo || (station.WeaponInfo != null && station.WeaponInfo.cargo)))
+                if (station != null && (station.Cargo || (station.WeaponInfo != null && (station.WeaponInfo.cargo || station.WeaponInfo.troops))))
                     count += Mathf.Max(0, station.Ammo);
             return count;
         }
