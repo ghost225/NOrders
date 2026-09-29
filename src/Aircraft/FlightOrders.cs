@@ -502,6 +502,7 @@ namespace NOrders
         internal static void Tick()
         {
             AssessThreats();
+            Guard.Run("Missile jamming", MissileJamming.Tick);
             for (int i = flights.Count - 1; i >= 0; i--)
                 if (flights[i].Aircraft == null || flights[i].Aircraft.disabled) flights.RemoveAt(i);
             foreach (Flight flight in flights)
