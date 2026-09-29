@@ -771,6 +771,19 @@ namespace NOrders
             if (flight.InLaunchRangeSince < 0f) flight.InLaunchRangeSince = Time.timeSinceLevelLoad;
             if (Time.timeSinceLevelLoad - flight.InLaunchRangeSince > 60f) { CompleteRunIn(pilot, "no launch in a minute"); return; }
 
+            // Speed before the shot: a loaded fighter that fired at 74 m/s went
+            // straight into the sea. Below 1.15 times corner speed it flies on
+            // at full power and lines up when it has the speed back.
+            float corner = parameters != null ? parameters.cornerSpeed : 0f;
+            if (corner > 0f && aircraft.speed < corner * 1.15f)
+            {
+                controlInputs.throttle = 1f; Reheat();
+                Vector3 ahead = Flat(aircraft.transform.forward);
+                if (ahead.sqrMagnitude < 0.01f) ahead = Vector3.forward;
+                Steer(aircraft.GlobalPosition() + ahead.normalized * 5000f, default, 20f);
+                return;
+            }
+
             // Nose onto the target, level: the cone is a 3D angle, and from
             // height a distant target sits only a few degrees below.
             Steer(known);
