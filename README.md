@@ -8,7 +8,7 @@ of its own, no csproj. An SDK-style project whose folder contains the
 submodule already compiles `norders/src/**/*.cs` by default; don't add it
 again explicitly, or the files are compiled twice.
 
-Private for now.
+MIT licensed (see LICENSE); third-party notices in THIRD_PARTY_NOTICES.md.
 
 ## Wiring a mod
 
