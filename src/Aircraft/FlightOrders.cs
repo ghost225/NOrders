@@ -64,6 +64,11 @@ namespace NOrders
         public FlightThreat Threat;
         public bool ThreatIsInfrared;       // flares matter, and it must be let in much closer
         public float ThreatRange = float.PositiveInfinity;
+        public Missile ThreatMissile;       // the nearest shot at us
+        public float LastBurstAt;           // IR defence: when the last string of flares ended
+        // A heat-seeker inbound and the flight not on a run-in or in a fight
+        // the native pilot is flying: our state flies the beam turn.
+        public bool EvadingInfrared => Threat == FlightThreat.Missile && ThreatIsInfrared && ThreatMissile != null && !ThreatMissile.disabled;
         public float NextFlare;
         public float NextPreFlare;
         public int FlaresThisShot;
@@ -1280,6 +1285,7 @@ namespace NOrders
 
                 float nearestShot = float.PositiveInfinity;
                 bool infrared = false;
+                Missile nearestMissile = null;
 
                 foreach (Unit unit in UnitRegistry.allUnits)
                 {
@@ -1295,6 +1301,7 @@ namespace NOrders
                         if (shotRange < nearestShot)
                         {
                             nearestShot = shotRange;
+                            nearestMissile = missile;
                             // Anything that is not clearly heat-seeking is
                             // treated as radar guided, which hands over to
                             // native evasion far earlier -- the safer mistake.
@@ -1322,19 +1329,8 @@ namespace NOrders
                 flight.Threat = threat;
                 flight.ThreatIsInfrared = infrared;
                 flight.ThreatRange = nearestShot;
+                flight.ThreatMissile = threat == FlightThreat.Missile ? nearestMissile : null;
                 IrDefence.Defend(flight, aircraft, threat == FlightThreat.Missile, infrared, nearestShot);
-
-                // Decoy on the way out. Once the native pilot has the aircraft
-                // it runs its own countermeasures, so this only covers the
-                // stretch we are flying ourselves.
-                if (threat == FlightThreat.Missile && infrared && flight.Mode == FlightMode.Egress &&
-                    Time.timeSinceLevelLoad >= flight.NextFlare &&
-                    aircraft.countermeasureManager != null &&
-                    IrDefence.FlareFraction(aircraft) > 0f)
-                {
-                    flight.NextFlare = Time.timeSinceLevelLoad + Tuning.FlareInterval;
-                    aircraft.countermeasureManager.PopFlares();
-                }
             }
         }
 
@@ -1360,13 +1356,14 @@ namespace NOrders
             if (flight.Mode == FlightMode.Egress)
             {
                 if (flight.Threat != FlightThreat.Missile) return false;
-                float handover = flight.ThreatIsInfrared
-                    ? Tuning.InfraredHandover : Tuning.RadarHandover;
-                return flight.ThreatRange <= handover;
+                if (flight.ThreatIsInfrared) return false;           // flown off on the beam by our state
+                return flight.ThreatRange <= Tuning.RadarHandover;
             }
 
             // Evasion is never a choice: being shot at overrides Weapons Hold.
-            if (flight.Threat == FlightThreat.Missile) return true;
+            // A radar shot goes to the native pilot, who notches and dives; a
+            // heat-seeker is ours: idle, beam, flares (see IrDefence).
+            if (flight.Threat == FlightThreat.Missile) return !flight.ThreatIsInfrared;
             if (flight.Roe == FlightRoe.Hold) return false;
             return flight.Threat == FlightThreat.Hostile;
         }

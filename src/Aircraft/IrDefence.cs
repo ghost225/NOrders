@@ -7,12 +7,19 @@ using UnityEngine;
 
 namespace NOrders
 {
-    // Heat-seekers during an attack run: flared off, not run from.
+    // Heat-seekers: flared off, with the engines cold and the missile on the
+    // beam, not run from.
     //
-    // Breaking away from a heat-seeking shot throws the attack away, and flares
-    // are what defeat it. So a striking flight stays on its heading: throttle
-    // to idle for a moment to cool the engines, a short string of flares, then
-    // back to full power. Radar-guided shots are still evaded -- flares do
+    // The seeker is decoyed when the flares' glare outweighs the aircraft's
+    // heat; that heat is the engine's power setting, with the afterburner on
+    // top, and it counts three times over from dead astern against once from
+    // abeam. And a flare only counts for as much as it separates from the
+    // aircraft in the seeker's eye: trailing straight back at a missile on
+    // the tail it barely registers. So: throttle to idle the moment a
+    // heat-seeker is inbound, a string of flares, repeated while it keeps
+    // coming, and -- unless on an attack run, which is held -- a turn to put
+    // the shot on the beam, flown by our own state (NavalPilotState.FlyBeam).
+    // Radar-guided shots are still handed to the native pilot -- flares do
     // nothing for those.
     //
     // Pre-flaring: inside the reach of an IR launcher the faction knows about,
@@ -40,29 +47,38 @@ namespace NOrders
             // Our flights only, flown by their AI: never another faction's or an
             // AI wingman the game owns, and never an aircraft you have the
             // controls of yourself.
-            if (flight.Mode != FlightMode.Strike || aircraft.countermeasureManager == null) return;
+            if (aircraft.countermeasureManager == null) return;
             if (Host.IsFlownByPlayer(flight)) return;
             float now = Time.timeSinceLevelLoad;
             float flares = FlareFraction(aircraft);
 
             if (missile && infrared)
             {
-                // A fresh shot, or the last one gone past: a new string.
+                // Engines cold for as long as it is coming.
+                flight.ThrottleCutUntil = now + 0.5f;
+                // A fresh shot, or the last one gone past: a new string. A
+                // string that did not shake it is followed by another after a
+                // pause, while the flares last.
                 if (shotRange > Tuning.IrBurstRange * 1.5f) flight.FlaresThisShot = 0;
+                if (flight.FlaresThisShot >= Tuning.IrBurstFlares && now - flight.LastBurstAt >= Tuning.IrBurstPause &&
+                    flares > Tuning.FlareReserve * 0.5f)
+                    flight.FlaresThisShot = 0;
                 if (shotRange <= Tuning.IrBurstRange && flight.FlaresThisShot < Tuning.IrBurstFlares &&
                     now >= flight.NextFlare && flares > 0f)
                 {
                     aircraft.countermeasureManager.PopFlares();
                     flight.FlaresThisShot++;
                     flight.NextFlare = now + 0.3f;
-                    flight.ThrottleCutUntil = now + 1.2f;
+                    flight.LastBurstAt = now;
                     if (flight.FlaresThisShot == 1)
                         Tracing.Flight("[flight] " + flight.Name + " · heat-seeker at " +
-                            UnitConverter.DistanceReading(shotRange) + " · flaring, holding the run");
+                            UnitConverter.DistanceReading(shotRange) + " · idle, flaring" +
+                            (flight.Mode == FlightMode.Strike ? ", holding the run" : ", turning to the beam"));
                 }
                 return;
             }
             if (!missile) flight.FlaresThisShot = 0;
+            if (flight.Mode != FlightMode.Strike) return;
 
             // On the attack itself -- not while opening out to set it up.
             bool attacking = flight.RunInDone || !flight.SettingUp;
@@ -169,15 +185,16 @@ namespace NOrders
         }
     }
 
-    // The combat pilot's own heat-seeker evasion holds idle throttle and
-    // flares continuously for as long as the missile is in the air: it keeps
-    // the heading, but it empties the dispensers and bleeds away the speed the
-    // attack needs. For our striking flights, the burst above does the
-    // flaring and this only follows its throttle.
+    // The combat pilot's own heat-seeker evasion waits out a reaction time
+    // with the throttle wherever it was -- usually wide open, afterburner
+    // lit -- then idles and holds the flare button down until the missile is
+    // gone, emptying the dispensers. For any flight of ours the native pilot
+    // is flying, the strings above do the flaring and the throttle comes off
+    // at once; this only follows that.
     [HarmonyPatch(typeof(AIPilotCombatModes), "EvadeModeIR")]
-    internal static class StrikeIrEvasionPatch
+    internal static class NativeIrEvasionPatch
     {
-        private const string Name = "Strike IR evasion";
+        private const string Name = "IR evasion";
         private static readonly AccessTools.FieldRef<PilotBaseState, Aircraft> AircraftOf =
             AccessTools.FieldRefAccess<PilotBaseState, Aircraft>("aircraft");
         private static readonly AccessTools.FieldRef<PilotBaseState, ControlInputs> InputsOf =
@@ -190,9 +207,10 @@ namespace NOrders
             {
                 Aircraft aircraft = AircraftOf(__instance);
                 Flight flight = FlightOrders.Of(aircraft);
-                if (flight == null || flight.Mode != FlightMode.Strike) return true;
+                if (flight == null || Host.IsFlownByPlayer(flight)) return true;
                 ControlInputs inputs = InputsOf(__instance);
-                if (inputs != null) inputs.throttle = Time.timeSinceLevelLoad < flight.ThrottleCutUntil ? 0f : 1f;
+                if (inputs != null && aircraft.autopilot is AutopilotPlane)
+                    inputs.throttle = Time.timeSinceLevelLoad < flight.ThrottleCutUntil ? 0f : 1f;
                 return false;
             }
             catch (Exception ex) { Guard.Failed(Name, ex); return true; }

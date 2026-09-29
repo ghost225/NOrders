@@ -132,6 +132,16 @@ namespace NOrders
                     : flight.Mode == FlightMode.Strike || flight.Mode == FlightMode.Egress ? 1f
                     : CruiseThrottle();
 
+            // A heat-seeker inbound: engines cold (above), the shot on the
+            // beam, flares going (IrDefence). Not on a run-in, which is held;
+            // a wingman leaves the formation for it and rejoins after.
+            if (flight.EvadingInfrared && flight.Mode != FlightMode.Strike)
+            {
+                if (aircraft.autopilot is AutopilotPlane) controlInputs.throttle = 0f;
+                FlyBeam(flight.ThreatMissile);
+                return;
+            }
+
             // A lead whose wing is still forming up circles where it is until
             // they have joined, rather than leaving them behind.
             bool joinable = flight.Mode == FlightMode.Orbit || flight.Mode == FlightMode.Route ||
@@ -272,6 +282,25 @@ namespace NOrders
         // Out low and away. Height is the thing a departing aircraft can trade
         // for survival, so the egress leg ignores the flight's ordered altitude
         // and runs at the egress height instead.
+        // Put the missile on the beam: ninety degrees off its bearing, on
+        // whichever side is the smaller turn, holding the height it has --
+        // no climb to bleed the speed, no dive into the ground. From abeam
+        // the seeker sees the flares well apart from the aircraft and the
+        // engines at their coolest aspect.
+        private void FlyBeam(Missile missile)
+        {
+            Vector3 toMissile = Flat(missile.transform.position - aircraft.transform.position);
+            if (toMissile.sqrMagnitude < 1f) toMissile = Flat(-aircraft.transform.forward);
+            toMissile.Normalize();
+            Vector3 left = new Vector3(-toMissile.z, 0f, toMissile.x);
+            Vector3 forward = Flat(aircraft.transform.forward);
+            Vector3 beam = Vector3.Dot(forward, left) >= 0f ? left : -left;
+            float ordered = flight.Altitude;
+            flight.Altitude = Mathf.Max(Mathf.Min(aircraft.radarAlt, ordered), MinimumClearance);
+            Steer(aircraft.GlobalPosition() + beam * 4000f, default, 80f);
+            flight.Altitude = ordered;
+        }
+
         private void FlyEgress()
         {
             float ordered = flight.Altitude;

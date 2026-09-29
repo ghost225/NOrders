@@ -28,6 +28,7 @@ namespace NOrders
         public static float CruiseThrottle = 0.8f;
         public static float IrBurstRange = 3000f;
         public static int IrBurstFlares = 4;
+        public static float IrBurstPause = 1.5f;      // between strings while the shot keeps coming
         public static bool PreFlare = true;
         public static float PreFlareInterval = 2f;
         public static float FlareReserve = 0.3f;
