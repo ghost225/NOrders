@@ -521,6 +521,7 @@ namespace NOrders
             AssessThreats();
             Guard.Run("Missile jamming", MissileJamming.Tick);
             Guard.Run("Laser defence", LaserDefence.Tick);
+            Guard.Run("Moving deck recovery", MovingDeckRecovery.Tick);
             for (int i = flights.Count - 1; i >= 0; i--)
                 if (flights[i].Aircraft == null || flights[i].Aircraft.disabled) flights.RemoveAt(i);
             foreach (Flight flight in flights)
