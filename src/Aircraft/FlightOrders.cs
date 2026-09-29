@@ -1343,7 +1343,9 @@ namespace NOrders
                     WeaponStation station = BestStationFor(aircraft, unit);
                     if (station == null) continue;
                     float range = FastMath.Distance(aircraft.GlobalPosition(), unit.GlobalPosition());
-                    if (range <= station.WeaponInfo.targetRequirements.maxRange) threat = FlightThreat.Hostile;
+                    if (range > station.WeaponInfo.targetRequirements.maxRange) continue;
+                    if (Host.AvoidEngaging(flight, unit)) continue;      // under their missiles: not worth it
+                    threat = FlightThreat.Hostile;
                 }
 
                 // Weapons tight fights back at whoever actually shot at us, which

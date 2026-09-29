@@ -50,5 +50,11 @@ namespace NOrders
         // route a returning flight round them. Every return goes through it,
         // including the ones this tree orders itself for fuel or ammunition.
         public static Func<Flight, GlobalPosition?> DoglegHome = _ => null;
+
+        // Whether a hostile is one this flight should leave alone: the host
+        // mod knows what sits under the enemy's missiles. A weapons-free
+        // patrol that chased every hostile in range flew into a fleet's air
+        // defences for a run's worth of losses.
+        public static Func<Flight, Unit, bool> AvoidEngaging = (_, __) => false;
     }
 }
