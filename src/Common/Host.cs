@@ -25,5 +25,12 @@ namespace NOrders
 
         // Stamped on units this mod owns (see Ownership).
         public static string ModId = "NOrders";
+
+        // Whether kills by flights this mod adopts are credited to the local
+        // player. True for a mod that launches flights on the player's behalf
+        // (Naval Power); false for one that commands AI factions, whose kills
+        // are nobody's. Either way, only a flight of the player's own faction
+        // is ever credited.
+        public static bool CreditKillsToPlayer = true;
     }
 }

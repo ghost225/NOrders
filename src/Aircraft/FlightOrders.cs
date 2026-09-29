@@ -311,8 +311,9 @@ namespace NOrders
         // this field for owned ground vehicles.
         private static void CreditKills(Aircraft aircraft)
         {
-            if (aircraft == null) return;
+            if (aircraft == null || !Host.CreditKillsToPlayer) return;
             if (!GameManager.GetLocalPlayer<Player>(out Player player) || player == null) return;
+            if (player.HQ == null || aircraft.NetworkHQ != player.HQ) return;   // never another faction's kills
             if (!UnitRegistry.TryGetPersistentUnit(aircraft.persistentID, out PersistentUnit persistent)) return;
             if (persistent == null || persistent.player != null) return;     // never take another player's
             persistent.player = player;
