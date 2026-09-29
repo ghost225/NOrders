@@ -26,6 +26,9 @@ namespace NOrders
         private static MethodInfo setMission, findGround, cargoStationOf;
         private static Type modeType;
         private static readonly FieldInfo AircraftOf = AccessTools.Field(typeof(PilotBaseState), "aircraft");
+        private static FieldInfo runIn, rejoining, configOf;
+        private static readonly Dictionary<PilotBaseState, float> nextTrace = new Dictionary<PilotBaseState, float>();
+        private static readonly HashSet<Aircraft> tuned = new HashSet<Aircraft>();
 
         // What we last pointed each state at, so the run-in is not restarted
         // every time the state looks for a mission.
@@ -60,6 +63,9 @@ namespace NOrders
             cargoStation = AccessTools.Field(state, "cargoStation");
             setMission = AccessTools.Method(state, "SetMission");
             findGround = AccessTools.Method(state, "TryFindGroundDropPoint");
+            runIn = AccessTools.Field(state, "runInDirection");
+            rejoining = AccessTools.Field(state, "runInRejoining");
+            configOf = AccessTools.Field(state, "config");
             modeType = setMission?.GetParameters().Length == 4 ? setMission.GetParameters()[2].ParameterType : null;
             Type selector = null;
             try { foreach (Type type in assembly.GetTypes()) if (type.Name == "FixedWingTransportSelector") { selector = type; break; } }
@@ -162,7 +168,63 @@ namespace NOrders
                 Tracing.Flight("[flight] " + flight.Name + " · airdrop run-in to the ordered point");
             }
             instance.stateDisplayName = "Airdrop at ordered point";
+            Tune(instance, aircraft, flight);
+            Trace(instance, aircraft, flight);
             return true;
+        }
+
+        // The game's autopilot scales the height it is asked to hold by
+        // airspeed over landing speed, down to a tenth. The Chimera lands at
+        // 120 m/s and runs its drop at 1.35 times that, where 250 m asked for
+        // comes out near 125 -- under the 150 m it will release from, so it
+        // flew every pass too low to drop. Asking ours for more lands the
+        // held height inside the release band.
+        private static void Tune(PilotBaseState instance, Aircraft aircraft, Flight flight)
+        {
+            if (tuned.Contains(aircraft) || configOf == null) return;
+            tuned.Add(aircraft);
+            object config = configOf.GetValue(instance);
+            if (config == null) return;
+            FieldInfo preferred = AccessTools.Field(config.GetType(), "preferredDropRadarAltitude");
+            FieldInfo maximum = AccessTools.Field(config.GetType(), "maximumDropRadarAltitude");
+            if (preferred == null || maximum == null) return;
+            float was = (float)preferred.GetValue(config);
+            float want = Mathf.Min((float)maximum.GetValue(config) * 0.93f, 420f);
+            if (was >= want) return;
+            preferred.SetValue(config, want);
+            Host.LogInfo("[flight] " + flight.Name + " · drop height asked of the autopilot " + was.ToString("0") + " -> " + want.ToString("0") +
+                " m, so its airspeed scaling still holds it inside the release band");
+        }
+
+        // Every few seconds on the run: where it is against the Chimera's own
+        // release conditions, so a pass that drops nothing can be read off the log.
+        private static void Trace(PilotBaseState instance, Aircraft aircraft, Flight flight)
+        {
+            if (nextTrace.TryGetValue(instance, out float next) && Time.timeSinceLevelLoad < next) return;
+            nextTrace[instance] = Time.timeSinceLevelLoad + 3f;
+            object config = configOf?.GetValue(instance);
+            if (config == null || runIn == null) return;
+            float F(string name) { FieldInfo f = AccessTools.Field(config.GetType(), name); return f != null ? (float)f.GetValue(config) : float.NaN; }
+            GlobalPosition point = (GlobalPosition)dropPoint.GetValue(instance);
+            Vector3 dir = (Vector3)runIn.GetValue(instance);
+            Vector3 velocity = aircraft.rb != null ? aircraft.rb.velocity : Vector3.zero;
+            velocity.y = 0f;
+            float descent = F("parachuteDeploymentDelay") + Mathf.Max(aircraft.radarAlt, 0f) / Mathf.Max(F("parachuteDescentSpeed"), 0.1f);
+            Vector3 lands = (aircraft.GlobalPosition() + velocity * (F("horizontalVelocityRetention") * descent)) - point;
+            lands.y = 0f;
+            Vector3 to = point - aircraft.GlobalPosition();
+            to.y = 0f;
+            float heading = Vector3.Angle(velocity, dir);
+            float cross = Mathf.Abs(Vector3.Dot(to, Vector3.Cross(Vector3.up, dir)));
+            float along = Vector3.Dot(to, dir);
+            Tracing.Flight("[flight] " + flight.Name + " · drop run · " + (to.magnitude / 1000f).ToString("0.0") + " km to go (" +
+                along.ToString("0") + " along, " + cross.ToString("0") + " across, limit " + F("maximumReleaseCrossTrackError").ToString("0") +
+                ") · radar alt " + aircraft.radarAlt.ToString("0") + " m (release " + F("minimumDropRadarAltitude").ToString("0") + "-" +
+                F("maximumDropRadarAltitude").ToString("0") + ") · " + aircraft.speed.ToString("0") + " m/s · heading off the run " +
+                heading.ToString("0") + "° (limit " + F("maximumReleaseHeadingError").ToString("0") + ") · cargo would land " +
+                lands.magnitude.ToString("0") + " m off (limit " + F("releaseRadius").ToString("0") + ")" +
+                (rejoining != null && (bool)rejoining.GetValue(instance) ? " · coming round again" : "") +
+                " · " + instance.stateDisplayName);
         }
 
         internal static void Forget()
@@ -170,7 +232,8 @@ namespace NOrders
             var stale = new List<PilotBaseState>();
             foreach (PilotBaseState key in applied.Keys)
                 if (!(AircraftOf?.GetValue(key) is Aircraft aircraft) || aircraft == null || aircraft.disabled) stale.Add(key);
-            foreach (PilotBaseState key in stale) applied.Remove(key);
+            foreach (PilotBaseState key in stale) { applied.Remove(key); nextTrace.Remove(key); }
+            tuned.RemoveWhere(a => a == null || a.disabled);
         }
     }
 }
