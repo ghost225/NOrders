@@ -183,19 +183,26 @@ namespace NOrders
             bool continuous, bool append, out string reason)
         {
             if (orders.Count >= 16) { reason = "The order queue is full."; return false; }
-            // Replacing cancels unlaunched work for this weapon only; anything
-            // already in the air keeps its own seeker and objective.
+            // A new order at the same target with the same weapon replaces the
+            // old one's unlaunched rounds -- that is how the count is changed.
+            // At another target it queues behind whatever this weapon is still
+            // firing: replacing those too meant a quick run of orders at
+            // several targets kept only the last, because the earlier ones had
+            // not got their rounds away yet. Anything already in the air keeps
+            // its own seeker and objective either way.
             if (!append)
                 for (int i = orders.Count - 1; i >= 0; i--)
-                    if (orders[i].Key == key) { Release(orders[i]); orders.RemoveAt(i); }
+                    if (orders[i].Key == key && orders[i].Target == target) { Release(orders[i]); orders.RemoveAt(i); }
 
+            bool behind = false;
+            foreach (Order other in orders) if (other.Key == key) { behind = true; break; }
             orders.Add(new Order
             {
                 Key = key, Target = target, Stations = stations,
                 Remaining = count, Requested = count, Continuous = continuous,
                 Created = Time.timeSinceLevelLoad
             });
-            reason = lastStatus = (append ? "Queued " : "Ordered ")
+            reason = lastStatus = (append || behind ? "Queued " : "Ordered ")
                 + (continuous ? "continuous " : count + " × ") + stations[0].WeaponInfo.weaponName
                 + " against " + target.definition.unitName;
             Host.LogInfo("[order] " + ship.definition?.unitName + ": " + reason);

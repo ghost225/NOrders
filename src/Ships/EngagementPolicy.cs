@@ -29,15 +29,36 @@ namespace NOrders
             return true;
         }
 
+        // A weapon's own rules, over the ship's: null follows the ship.
+        public static EngagementMode? GetWeaponMode(Ship ship, string key)
+        {
+            var state = ship != null ? ship.GetComponent<ShipEngagement>() : null;
+            return state != null && key != null && state.PerWeapon.TryGetValue(key, out EngagementMode mode) ? mode : (EngagementMode?)null;
+        }
+
+        public static bool SetWeaponMode(Ship ship, string key, EngagementMode? mode, out string reason)
+        {
+            if (!CommandableShip.CanCommand(ship, out reason)) return false;
+            if (key == null) { reason = "No such weapon."; return false; }
+            var state = ShipEngagement.Ensure(ship);
+            if (mode.HasValue) state.PerWeapon[key] = mode.Value;
+            else state.PerWeapon.Remove(key);
+            reason = mode.HasValue ? Describe(mode.Value) : "Follows the ship's rules · " + Describe(state.Mode);
+            return true;
+        }
+
         // May this shot leave the ship? Anything we did not order, from a ship
-        // under command, has to satisfy the rules of engagement.
-        internal static bool Allows(Unit owner, Unit target)
+        // under command, has to satisfy the rules of engagement -- this
+        // weapon's own, if it has them, or the ship's.
+        internal static bool Allows(Unit owner, Unit target, Weapon weapon = null)
         {
             if (ShipWeapons.Firing) return true;              // our own explicit order
             if (!(owner is Ship ship)) return true;
             var state = ship.GetComponent<ShipEngagement>();
-            if (state == null || state.Mode == EngagementMode.WeaponsFree) return true;
-            return state.Permits(target);
+            if (state == null) return true;
+            EngagementMode mode = state.ModeFor(weapon != null ? WeaponOrders.KeyOf(weapon.info) : null);
+            if (mode == EngagementMode.WeaponsFree) return true;
+            return state.Permits(target, mode);
         }
 
         // A mount finishing an explicit order returns to whatever the standing
@@ -52,7 +73,7 @@ namespace NOrders
             if (NativeBindings.TurretChooseTarget != null && turret.GetTarget() != null)
                 NativeBindings.TurretChooseTarget.Invoke(turret, new object[] { true });
             var state = ship != null ? ship.GetComponent<ShipEngagement>() : null;
-            if (state == null || state.Mode == EngagementMode.WeaponsFree)
+            if (state == null || state.ModeFor(ShipEngagement.KeyOf(turret)) == EngagementMode.WeaponsFree)
             {
                 turret.SetManual(false);
                 return;
@@ -110,7 +131,7 @@ namespace NOrders
         private static bool Prefix(Weapon __instance, Unit __0, Unit __1)
         {
             if (!Guard.Ok(Name)) return true;                 // never hold fire on a broken rule
-            try { return NuclearRelease.Allows(__instance, __0) && EngagementPolicy.Allows(__0, __1); }
+            try { return NuclearRelease.Allows(__instance, __0) && EngagementPolicy.Allows(__0, __1, __instance); }
             catch (Exception ex) { Guard.Failed(Name, ex); return true; }
         }
 
@@ -125,6 +146,20 @@ namespace NOrders
         private readonly List<Unit> inbound = new List<Unit>();
 
         internal EngagementMode Mode = EngagementMode.WeaponsFree;
+        internal readonly Dictionary<string, EngagementMode> PerWeapon = new Dictionary<string, EngagementMode>();
+
+        internal EngagementMode ModeFor(string key) =>
+            key != null && PerWeapon.TryGetValue(key, out EngagementMode mode) ? mode : Mode;
+
+        internal static string KeyOf(Turret turret) => WeaponOrders.KeyOf(turret?.GetWeapon()?.info);
+
+        // Anything held back at all -- the ship, or any one weapon.
+        private bool Restricted()
+        {
+            if (Mode != EngagementMode.WeaponsFree) return true;
+            foreach (EngagementMode mode in PerWeapon.Values) if (mode != EngagementMode.WeaponsFree) return true;
+            return false;
+        }
 
         internal static ShipEngagement Ensure(Ship ship)
         {
@@ -141,7 +176,7 @@ namespace NOrders
         private void Update()
         {
             if (ship == null || ship.disabled || !ship.IsServer || !ship.LocalSim) return;
-            if (Mode == EngagementMode.WeaponsFree)
+            if (!Restricted())
             {
                 // Nothing to deny; make sure nothing stays held from a stricter mode.
                 if (Time.timeSinceLevelLoad >= nextSweep) { nextSweep = Time.timeSinceLevelLoad + 1f; ReleaseAll(); }
@@ -168,19 +203,22 @@ namespace NOrders
         }
 
         // The same rules the turret sweep applies, asked of a single shot.
-        internal bool Permits(Unit target)
+        internal bool Permits(Unit target, EngagementMode mode)
         {
+            if (mode == EngagementMode.WeaponsFree) return true;
             if (target == null) return false;
             if (target is Missile) return inbound.Contains(target);
-            if (Mode == EngagementMode.WeaponsHold) return false;
+            if (mode == EngagementMode.WeaponsHold) return false;
             return attackers.Contains(target.persistentID.Id);
         }
 
         private bool Sanctioned(Turret turret, Unit target)
         {
+            EngagementMode mode = ModeFor(KeyOf(turret));
+            if (mode == EngagementMode.WeaponsFree) return true;     // this weapon is free
             if (target == null) return true;                         // Idle mounts are fine.
             if (target is Missile) return inbound.Contains(target);  // Only actual inbounds.
-            if (Mode == EngagementMode.WeaponsHold) return false;    // Hold permits nothing else.
+            if (mode == EngagementMode.WeaponsHold) return false;    // Hold permits nothing else.
             return attackers.Contains(target.persistentID.Id);       // Tight: only those who shot at us.
         }
 

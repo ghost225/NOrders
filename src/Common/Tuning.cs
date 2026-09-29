@@ -44,6 +44,7 @@ namespace NOrders
         public static int DamageControlRate = 5;
         public static bool DamageControlPreserveCapacity = true;
         public static int DamageControlConcentration = 6;
+        public static float DamageControlRestock = 0.2f;   // of full capacity, per resupply delivered
         public static bool NameShips = true;
 
         // Diagnostics

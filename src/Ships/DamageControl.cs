@@ -162,6 +162,26 @@ namespace NOrders
             return best;
         }
 
+        // How much of the reserve is left, as a fraction of full.
+        internal static float ReserveFraction(Ship ship)
+        {
+            if (ship == null) return 1f;
+            float full = Capacity(ship);
+            return full > 0.01f ? Mathf.Clamp01(ship.damageControlAvailable / full) : 1f;
+        }
+
+        // A resupply brings damage control stores with it: back up by a share
+        // of full capacity, never past full. The game has no way to replenish
+        // the reserve at all -- it only ever runs down.
+        internal static float Restock(Ship ship, float fraction)
+        {
+            if (ship == null || fraction <= 0f) return 0f;
+            float full = Capacity(ship);
+            float before = ship.damageControlAvailable;
+            ship.damageControlAvailable = Mathf.Min(full, before + full * fraction);
+            return ship.damageControlAvailable - before;
+        }
+
         private static HashSet<int> Priorities(Ship ship)
         {
             if (ship == null) return new HashSet<int>();
@@ -339,5 +359,38 @@ namespace NOrders
     internal static class DamageControlPriorityPatch
     {
         private static bool Prefix(ShipPart __instance) => !DamageControl.IsDeprioritised(__instance);
+    }
+
+    // Every rearm the game processes for a ship we control also restocks its
+    // damage control reserve (Tuning.DamageControlRestock of full capacity).
+    [HarmonyPatch(typeof(Rearmer), nameof(Rearmer.ProcessRearmRequest))]
+    internal static class DamageControlRestockPatch
+    {
+        private const string Name = "Damage control restock";
+
+        // One restock per ship per five minutes: asked for again and again
+        // beside a port or a supply ship, a rearm with nothing to load was a
+        // tap of free stores.
+        private static readonly System.Collections.Generic.Dictionary<Ship, float> lastRestock =
+            new System.Collections.Generic.Dictionary<Ship, float>();
+        private const float RestockEvery = 300f;
+
+        private static void Postfix(Unit unitToRearm)
+        {
+            if (!Guard.Ok(Name)) return;
+            try
+            {
+                if (!(unitToRearm is Ship ship) || !CommandableShip.Controlled(ship)) return;
+                if (lastRestock.TryGetValue(ship, out float at) && Time.timeSinceLevelLoad - at < RestockEvery && Time.timeSinceLevelLoad >= at) return;
+                lastRestock[ship] = Time.timeSinceLevelLoad;
+                float added = DamageControl.Restock(ship, Tuning.DamageControlRestock);
+                if (added > 0.01f)
+                {
+                    Host.Say(ShipNames.Of(ship) + " · damage control stores restocked · reserve " + (DamageControl.ReserveFraction(ship) * 100f).ToString("0") + "%");
+                    Host.LogInfo("[rearm] " + ShipNames.Of(ship) + " · damage control restocked by " + added.ToString("0"));
+                }
+            }
+            catch (System.Exception ex) { Guard.Failed(Name, ex); }
+        }
     }
 }

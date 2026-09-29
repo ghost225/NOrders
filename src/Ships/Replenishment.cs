@@ -11,6 +11,8 @@ namespace NOrders
         public float NearestRange = float.PositiveInfinity;
         public bool InRange;
         public int StationsShort;
+        public float DamageControlReserve = 1f;       // fraction of full
+        public bool NeedsSupply => StationsShort > 0 || DamageControlReserve < 0.95f;
         public string Reason;
     }
 
@@ -37,6 +39,7 @@ namespace NOrders
 
             foreach (WeaponStation station in ship.weaponStations)
                 if (station != null && station.Ammo < station.FullAmmo) result.StationsShort++;
+            result.DamageControlReserve = DamageControl.ReserveFraction(ship);
 
             foreach (Rearmer rearmer in Object.FindObjectsOfType<Rearmer>())
             {
@@ -50,7 +53,7 @@ namespace NOrders
             }
 
             result.Reason =
-                result.StationsShort == 0 ? "Magazines full."
+                !result.NeedsSupply ? "Magazines and damage control stores full."
                 : result.NearestName == null ? "No friendly rearming point."
                 : result.Moving ? "Too fast to be serviced · come to under " +
                     UnitConverter.SpeedReadingGround(MaxSpeedForService)
@@ -65,7 +68,7 @@ namespace NOrders
         {
             if (!CommandableShip.CanCommand(ship, out reason)) return false;
             RearmSnapshot status = Status(ship);
-            if (status.StationsShort == 0) { reason = "Magazines are already full."; return false; }
+            if (!status.NeedsSupply) { reason = "Magazines and damage control stores are already full."; return false; }
             if (status.NearestName == null) { reason = "Nothing in the faction can rearm this ship."; return false; }
             if (ship.HasRequestedRearm) { reason = "Already requested; waiting on " + status.NearestName + "."; return false; }
 
@@ -222,7 +225,7 @@ namespace NOrders
         internal static bool SendSupply(Ship ship, out string reason)
         {
             if (!CommandableShip.CanCommand(ship, out reason)) return false;
-            if (Status(ship).StationsShort == 0) { reason = "Magazines are already full."; return false; }
+            if (!Status(ship).NeedsSupply) { reason = "Magazines and damage control stores are already full."; return false; }
             string inbound = InboundTo(ship);
             if (inbound != null) { reason = "Supply already on its way · " + inbound; return false; }
 
