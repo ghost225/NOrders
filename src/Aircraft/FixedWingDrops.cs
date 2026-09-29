@@ -31,7 +31,7 @@ namespace NOrders
         // every time the state looks for a mission.
         private static readonly Dictionary<PilotBaseState, GlobalPosition> applied = new Dictionary<PilotBaseState, GlobalPosition>();
 
-        private static Type State()
+        internal static Type State()
         {
             if (state != null || Time.unscaledTime < nextLookup) return state;
             nextLookup = Time.unscaledTime + 10f;
