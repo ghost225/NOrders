@@ -465,7 +465,8 @@ namespace NOrders
 
         public static void Station(Flight flight, Ship on = null) => FlightOrders.Station(Led(flight), on);
 
-        public static void Jam(Flight flight, Unit target) => FlightOrders.Jam(Led(flight), target);
+        public static bool Jam(Flight flight, Unit target, bool add = false) =>
+            add ? FlightOrders.Jam(Wings.LeadOf(flight), target, true) : FlightOrders.Jam(Led(flight), target);
 
         private const float AirdropSpacing = 200f;       // drop points abreast, across the run
         private const float LandingSpacing = 150f;       // rotor to rotor, with room to spare

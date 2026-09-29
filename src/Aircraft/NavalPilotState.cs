@@ -390,16 +390,8 @@ namespace NOrders
             FlyOrbit(target.GlobalPosition());
             flight.OrbitRadius = radius;
 
-            // Every pod aboard, whichever station it hangs on -- only the first
-            // station's were used, leaving a second pod idle -- except any
-            // jamming a missile fired at us, which MissileJamming aims.
-            foreach (MissileJamming.Pod pod in MissileJamming.Pods(aircraft))
-            {
-                if (MissileJamming.OnMissile(pod.Weapon)) continue;
-                pod.Weapon.SetTarget(target);
-                pod.Weapon.Fire(aircraft, target, aircraft.rb != null ? aircraft.rb.velocity : Vector3.zero,
-                    pod.Station, default(GlobalPosition));
-            }
+            // The pods themselves are aimed by MissileJamming: each task
+            // target a pod, and missiles fired at us taken first.
         }
 
         private void FlyStation()

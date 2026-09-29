@@ -37,7 +37,8 @@ namespace NOrders
         public Ship StationShip;
         public Ship StationAnchor => StationShip != null && !StationShip.disabled ? StationShip : Parent;
         public bool Adopted;
-        public Unit Target;                 // designated for a strike
+        public Unit Target;                 // designated for a strike; for jamming, the first of JamTargets
+        public readonly List<Unit> JamTargets = new List<Unit>();   // jamming: in priority order
         public string PreferredWeapon;      // WeaponInfo.name, or null for whatever suits best
         public bool WarnedAboutTrack;
         public float StrikeStarted;
@@ -281,8 +282,13 @@ namespace NOrders
                 case FlightMode.Egress: return "Egressing · weapons away";
                 case FlightMode.Cargo: return SupplyShip != null ? "Naval supply · " + ShipNames.Of(SupplyShip)
                     : (Airdrop ? "Airdrop" : "Delivery") + " · inbound to the zone";
-                case FlightMode.Jam: return Target != null && !Target.disabled
-                    ? "Jamming · " + (Target.definition?.unitName ?? Target.name) : "Jamming · target gone";
+                case FlightMode.Jam:
+                {
+                    var names = new List<string>();
+                    foreach (Unit unit in JamTargets) if (unit != null && !unit.disabled) names.Add(unit.definition?.unitName ?? unit.name);
+                    if (names.Count == 0 && Target != null && !Target.disabled) names.Add(Target.definition?.unitName ?? Target.name);
+                    return names.Count > 0 ? "Jamming · " + string.Join(", ", names) : "Jamming · target gone";
+                }
                 case FlightMode.Engage: return "Weapons free · AI engaging";
                 case FlightMode.Formation:
                     Flight lead = Wings.LeadOf(this);
@@ -572,10 +578,23 @@ namespace NOrders
             {
                 if (flight.Aircraft != null && !flight.Aircraft.disabled) CargoProgress(flight);
 
-                if (flight.Mode == FlightMode.Jam && (flight.Target == null || flight.Target.disabled))
+                if (flight.Mode == FlightMode.Jam)
                 {
-                    Host.LogInfo("[flight] " + flight.Name + " · jamming target gone");
-                    BreakOff(flight);
+                    // A target gone leaves the rest; the last one gone ends the task.
+                    int before = flight.JamTargets.Count;
+                    flight.JamTargets.RemoveAll(u => u == null || u.disabled);
+                    if (flight.JamTargets.Count == 0 && flight.Target != null && !flight.Target.disabled)
+                        flight.JamTargets.Add(flight.Target);
+                    if (flight.JamTargets.Count == 0)
+                    {
+                        Host.LogInfo("[flight] " + flight.Name + " · jamming target gone");
+                        BreakOff(flight);
+                    }
+                    else
+                    {
+                        if (flight.JamTargets.Count < before) Host.Say(flight.Name + " · a jamming target is gone · " + flight.JamTargets.Count + " left");
+                        flight.Target = flight.JamTargets[0];
+                    }
                 }
 
                 if (flight.Mode == FlightMode.Strike && (flight.Target == null || flight.Target.disabled))
@@ -1005,14 +1024,36 @@ namespace NOrders
         // to suppress a specific emitter. Unlike a strike this never closes:
         // the flight holds at standoff and keeps the pod on the target, which
         // is the whole point of sending it rather than something with bombs.
-        public static void Jam(Flight flight, Unit target)
+        // How many targets a flight can jam as its task: one per pod, less one
+        // kept free for missiles fired at it (none kept with a single pod).
+        public static int JamCapacity(Flight flight)
         {
-            if (flight == null || target == null) return;
+            int pods = MissileJamming.Pods(flight?.Aircraft).Count;
+            return pods >= 2 ? pods - 1 : pods;
+        }
+
+        // Jam this target: in place of what the flight was jamming, or added
+        // to it, up to its capacity. False when there is no room to add.
+        public static bool Jam(Flight flight, Unit target, bool add = false)
+        {
+            if (flight == null || target == null) return false;
+            flight.JamTargets.RemoveAll(u => u == null || u.disabled);
+            if (add && flight.Mode == FlightMode.Jam)
+            {
+                if (flight.JamTargets.Contains(target)) return true;
+                if (flight.JamTargets.Count >= JamCapacity(flight)) return false;
+                flight.JamTargets.Add(target);
+                flight.Target = flight.JamTargets[0];
+                return true;
+            }
             if (flight.Mode != FlightMode.Jam) flight.PreviousMode = flight.Mode;
+            flight.JamTargets.Clear();
+            flight.JamTargets.Add(target);
             flight.Target = target;
             flight.Route.Clear();
             flight.Mode = FlightMode.Jam;
             flight.Adopted = false;                 // ours to fly, not the combat pilot's
+            return true;
         }
 
         internal static WeaponStation JammerOn(Aircraft aircraft)
