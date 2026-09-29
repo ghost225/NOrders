@@ -53,6 +53,32 @@ namespace NOrders
             return pods;
         }
 
+        private static readonly System.Reflection.FieldInfo Falloff = AccessTools.Field(typeof(JammingPod), "rangeFalloff");
+        private const float StillEffective = 0.4f;   // of the pod's best, at the edge of its reach
+
+        // How far the aircraft's pods still jam well: the furthest distance at
+        // which the weakest pod's range falloff is still 40% of its best.
+        // Zero when no pod says.
+        internal static float Reach(Aircraft aircraft)
+        {
+            float reach = float.MaxValue;
+            foreach (Pod pod in Pods(aircraft))
+            {
+                float here = 0f;
+                if (Falloff?.GetValue(pod.Weapon) is AnimationCurve curve && curve.length > 0)
+                {
+                    float end = curve[curve.length - 1].time, best = 0f;
+                    for (float d = 0f; d <= end; d += end / 64f) best = Mathf.Max(best, curve.Evaluate(d));
+                    for (float d = end; d > 0f && best > 0f; d -= end / 64f)
+                        if (curve.Evaluate(d) >= best * StillEffective) { here = d; break; }
+                }
+                float listed = pod.Station?.WeaponInfo != null ? pod.Station.WeaponInfo.targetRequirements.maxRange : 0f;
+                if (listed > 0f) here = here > 0f ? Mathf.Min(here, listed) : listed;
+                if (here > 0f) reach = Mathf.Min(reach, here);
+            }
+            return reach == float.MaxValue ? 0f : reach;
+        }
+
         internal static bool Aimed(JammingPod pod) =>
             pod != null && assigned.TryGetValue(pod, out Unit target) && target != null && !target.disabled;
 
