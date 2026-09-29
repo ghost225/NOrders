@@ -610,7 +610,7 @@ namespace NOrders
                         // better than a navigation loop ever will.
                         flight.Interrupted = true;
                         PilotBaseState combat = CombatStateFor(crew);
-                        if (combat != null) crew.SwitchStateNew(combat);
+                        if (combat != null) { crew.SwitchStateNew(combat); NativePilot.Wake(combat, flight.Aircraft); }
                         Tracing.Flight("[flight] " + flight.Name + " · " +
                             (flight.Threat == FlightThreat.Missile ? "evading" : "engaging"));
                     }
@@ -687,6 +687,7 @@ namespace NOrders
                     PilotBaseState combat = CombatStateFor(pilot);
                     if (combat != null && !ReferenceEquals(pilot.currentState, combat))
                         pilot.SwitchStateNew(combat);
+                        NativePilot.Wake(combat, flight.Aircraft);
                     flight.Adopted = true;
                     Host.LogInfo("[flight] " + flight.Name + " · " +
                         (flight.Mode == FlightMode.Strike

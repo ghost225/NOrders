@@ -616,6 +616,7 @@ namespace NOrders
             if (combat == null) { FlyOrbit(flight.OrbitCentre); return; }
             Tracing.Flight("[flight] " + flight.Name + " · handing to the combat pilot · " + flight.Describe());
             pilot.SwitchStateNew(combat);
+            NativePilot.Wake(combat, aircraft);
         }
 
         private void HandBackToLanding(Pilot pilot)
