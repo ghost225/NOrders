@@ -334,6 +334,9 @@ namespace NOrders
             // Ours to reward: a flight this ship launched and commanded.
             Flight flight = FlightOrders.Of(aircraft);
             if (flight == null || aircraft.definition == null) return;
+            // Never airborne: abandoned in the taxi, not brought home.
+            Pilot pilot = FlightOrders.FirstPilot(aircraft);
+            if (pilot != null && !pilot.flightInfo.HasTakenOff) return;
             if (!GameManager.GetLocalPlayer<Player>(out Player player) || player == null) return;
 
             float rate = MissionManager.CurrentMission != null
