@@ -142,10 +142,14 @@ namespace NOrders
             // height, and not on an attack run: full power, wings near level,
             // a gentle climb toward the ordered height, nothing else until it
             // has the speed back.
-            if (aircraft.autopilot is AutopilotPlane && flight.Mode != FlightMode.Strike && flight.Mode != FlightMode.Formation)
+            // Wingmen included: one went into the sea chasing its slot. Not on
+            // a run-in. The threshold sits at corner speed itself: 1.25 times
+            // it put a mod fighter with a 150 m/s corner speed into permanent
+            // recovery, wandering off station at full power.
+            if (aircraft.autopilot is AutopilotPlane && flight.Mode != FlightMode.Strike)
             {
                 float corner = parameters != null ? parameters.cornerSpeed : 0f;
-                bool slow = corner > 0f && aircraft.speed < corner * 1.25f;
+                bool slow = corner > 0f && aircraft.speed < corner * 1.05f;
                 bool low = aircraft.radarAlt < 150f && flight.Mode != FlightMode.Egress;
                 if ((slow || low) && !flight.EvadingInfrared)
                 {
