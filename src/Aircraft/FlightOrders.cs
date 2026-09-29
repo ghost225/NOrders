@@ -65,6 +65,8 @@ namespace NOrders
         public bool ThreatIsInfrared;       // flares matter, and it must be let in much closer
         public float ThreatRange = float.PositiveInfinity;
         public Missile ThreatMissile;       // the nearest shot at us
+        public string LastThreat;           // the last shot at us, described; for the loss report
+        public float LastThreatAt;
         public float LastBurstAt;           // IR defence: when the last string of flares ended
         // A heat-seeker inbound and the flight not on a run-in or in a fight
         // the native pilot is flying: our state flies the beam turn.
@@ -1330,8 +1332,28 @@ namespace NOrders
                 flight.ThreatIsInfrared = infrared;
                 flight.ThreatRange = nearestShot;
                 flight.ThreatMissile = threat == FlightThreat.Missile ? nearestMissile : null;
+                if (nearestMissile != null)
+                {
+                    flight.LastThreat = (nearestMissile.GetWeaponInfo()?.weaponName ?? nearestMissile.name) + (infrared ? " (heat-seeking)" : " (radar)") +
+                        " at " + UnitConverter.DistanceReading(nearestShot) + " · " + Describe(flight);
+                    flight.LastThreatAt = Time.timeSinceLevelLoad;
+                }
                 IrDefence.Defend(flight, aircraft, threat == FlightThreat.Missile, infrared, nearestShot);
             }
+        }
+
+        // How the aircraft stood against a shot: who was flying it, throttle,
+        // flares, height. For the record of a loss.
+        internal static string Describe(Flight flight)
+        {
+            Aircraft aircraft = flight.Aircraft;
+            if (aircraft == null) return "gone";
+            Pilot pilot = FirstPilot(aircraft);
+            ControlInputs inputs = aircraft.GetInputs();
+            return flight.Mode + (flight.Interrupted ? " (native pilot" + (pilot?.currentState != null ? ": " + pilot.currentState.GetType().Name : "") + ")" : " (ours)") +
+                " · throttle " + (inputs != null ? (inputs.throttle * 100f).ToString("0") + "%" : "?") +
+                " · flares " + (IrDefence.FlareFraction(aircraft) * 100f).ToString("0") + "%" +
+                " · alt " + aircraft.radarAlt.ToString("0") + " m · " + aircraft.speed.ToString("0") + " m/s";
         }
 
         // Does the flight's ROE let the native pilot take it right now?
