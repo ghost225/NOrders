@@ -684,7 +684,11 @@ namespace NOrders
                     {
                         // Out of danger. Press again only with something left to
                         // press with, and only if the target is still there.
+                        // An aircraft gets one salvo per pass: the missiles
+                        // take time to arrive, and a wing re-attacking a lone
+                        // helicopter every egress emptied eight racks at it.
                         bool rearmed = !Host.Dead(flight.Target) &&
+                            !(flight.Target is Aircraft) &&
                             BestStationFor(flight.Aircraft, flight.Target) != null &&
                             Tuning.ReattackAfterEgress;
                         if (rearmed)
