@@ -132,6 +132,7 @@ namespace NOrders
                 controlInputs.throttle = Time.timeSinceLevelLoad < flight.ThrottleCutUntil ? IrDefence.EvasionThrottle(aircraft)
                     : flight.Mode == FlightMode.Strike || flight.Mode == FlightMode.Egress ? 1f
                     : CruiseThrottle();
+            Reheat();
 
             // Energy first. The native pilot hands an aircraft back from a
             // radar evasion low and slow -- it dives to the deck at full power
@@ -149,6 +150,7 @@ namespace NOrders
                 if ((slow || low) && !flight.EvadingInfrared)
                 {
                     controlInputs.throttle = 1f;
+                    Reheat();
                     Vector3 ahead = Flat(aircraft.transform.forward);
                     if (ahead.sqrMagnitude < 0.01f) ahead = Vector3.forward;
                     float ordered = flight.Altitude;
@@ -301,6 +303,19 @@ namespace NOrders
             // gets a look-ahead that points clean outside it.
             float lookAhead = Mathf.Min(LookAhead, radius * 1.5f);
             Steer(aircraft.GlobalPosition() + heading * lookAhead, default, SafeBank());
+        }
+
+        // The afterburner. On airframes whose engines carry a parasitic thrust
+        // loss (several mod jets), the game lights the burner only when the
+        // player's own auxiliary axis is pushed past a third; no AI pilot ever
+        // does, so those jets fly at a fraction of their thrust under any AI
+        // and mush into the sea with a full load. Our state pushes the axis
+        // whenever it wants full power and releases it otherwise, so the
+        // heat-seeker throttle cut still cools the engine.
+        private void Reheat()
+        {
+            if (!(aircraft.autopilot is AutopilotPlane)) return;
+            controlInputs.customAxis1 = controlInputs.throttle >= 0.98f ? 1f : 0f;
         }
 
         // How hard to bank with the speed in hand. A fighter well above its
