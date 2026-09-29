@@ -36,6 +36,9 @@ namespace NOrders
             if (!MissionManager.IsRunning) return;
 
             var seen = new HashSet<Aircraft>();
+            // Recovery returns the aircraft to the inventory, which edits the
+            // registry: collect during the sweep, recover after it.
+            var recover = new List<(Aircraft, Ship)>();
             foreach (Unit unit in UnitRegistry.allUnits)
             {
                 if (!(unit is Aircraft aircraft) || aircraft.disabled || aircraft.Player != null || aircraft.rb == null || !aircraft.IsServer) continue;
@@ -51,6 +54,10 @@ namespace NOrders
 
                 restingSince.Remove(aircraft);
                 seen.Remove(aircraft);
+                recover.Add((aircraft, ship));
+            }
+            foreach ((Aircraft aircraft, Ship ship) in recover)
+            {
                 Host.LogInfo("[deck] " + (FlightOrders.Of(aircraft)?.Name ?? aircraft.definition?.unitName ?? aircraft.name) +
                     " recovered aboard " + ShipNames.Of(ship) + " (ship under way)");
                 aircraft.NetworkunitState = Unit.UnitState.Abandoned;
