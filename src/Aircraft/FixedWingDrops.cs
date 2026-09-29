@@ -187,6 +187,10 @@ namespace NOrders
             if (config == null) return;
             FieldInfo preferred = AccessTools.Field(config.GetType(), "preferredDropRadarAltitude");
             FieldInfo maximum = AccessTools.Field(config.GetType(), "maximumDropRadarAltitude");
+            // The whole load on one pass, as a helicopter's is.
+            FieldInfo perPass = AccessTools.Field(config.GetType(), "cargoReleaseCountPerPass");
+            int aboard = FlightOrders.CargoAboard(aircraft);
+            if (perPass != null && (int)perPass.GetValue(config) < aboard) perPass.SetValue(config, aboard);
             if (preferred == null || maximum == null) return;
             float was = (float)preferred.GetValue(config);
             float want = Mathf.Min((float)maximum.GetValue(config) * 0.93f, 420f);

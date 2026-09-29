@@ -271,6 +271,7 @@ namespace NOrders
             if (Horizontal(aircraft.GlobalPosition(), leg) < 600f)
             {
                 flight.Route.RemoveAt(0);
+                if (flight.Route.Count == 0 && FlightOrders.LeadInReached(flight, leg)) return;
                 if (flight.Route.Count == 0)
                 {
                     // Hold where the route ended rather than flying on forever.

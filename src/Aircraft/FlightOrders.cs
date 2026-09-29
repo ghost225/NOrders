@@ -62,6 +62,12 @@ namespace NOrders
         internal float CargoSearch;         // how far round its point it may look for ground; 0 is the default
         internal int CargoAtOrder;          // cargo aboard when the delivery was ordered
         internal bool RejoinAfterCargo;     // a wingman done with its drop, circling until the lead is done
+        // An airdrop along a line: this aircraft's stretch of it, the point
+        // it flies to first so it runs in along the line, and the gap between
+        // items so its load is spread along the stretch.
+        internal bool HasDropLine, LeadInPending;
+        internal GlobalPosition DropLineStart, DropLineEnd, LeadIn;
+        internal float DropSpacing;
         public GlobalPosition EgressPoint;
         public float EgressUntil;
         public float NextEgressPlan;
@@ -523,6 +529,7 @@ namespace NOrders
             Guard.Run("Laser defence", LaserDefence.Tick);
             Guard.Run("Moving deck recovery", MovingDeckRecovery.Tick);
             Guard.Run("Deck wave-off", DeckWaveOff.Tick);
+            Guard.Run("Cargo in one pass", CargoBurst.Tick);
             Guard.Run("Fixed-wing drops", FixedWingDrops.Forget);
             for (int i = flights.Count - 1; i >= 0; i--)
                 if (flights[i].Aircraft == null || flights[i].Aircraft.disabled) flights.RemoveAt(i);
@@ -1145,6 +1152,8 @@ namespace NOrders
                 return;
             }
             if (FixedWingDrops.CanAirdrop(flight.Aircraft)) airdrop = true;
+            // A drop along a line keeps its line; any other delivery has none.
+            if (!deliveringAlong) { flight.HasDropLine = false; flight.LeadInPending = false; }
             StopJamming(flight);
             if (flight.Mode != FlightMode.Cargo) flight.PreviousMode = flight.Mode;
             flight.CargoPoint = where;
@@ -1158,6 +1167,61 @@ namespace NOrders
             flight.Mode = FlightMode.Cargo;
             flight.Adopted = false;
         }
+
+        // An airdrop along a stretch of line: out to a lead-in point short of
+        // its start first, so the run comes in along the line, then the drop
+        // from its start, the load spread along it. Any other order replaces
+        // the route, and the pending drop with it.
+        public static void DeliverAlong(Flight flight, GlobalPosition start, GlobalPosition end)
+        {
+            if (flight?.Aircraft == null) return;
+            if (!CanDeliver(flight.Aircraft))
+            {
+                Host.Say(flight.Name + " · " + WhyNoDelivery(flight.Aircraft));
+                return;
+            }
+            Vector3 along = end - start;
+            along.y = 0f;
+            float length = along.magnitude;
+            Vector3 dir = length > 1f ? along / length : Vector3.forward;
+            bool plane = FixedWingDrops.CanAirdrop(flight.Aircraft);
+            int items = Mathf.Max(1, CargoAboard(flight.Aircraft));
+            flight.HasDropLine = true;
+            flight.DropLineStart = start;
+            flight.DropLineEnd = end;
+            flight.DropSpacing = items > 1 ? length / (items - 1) : 0f;
+            flight.LeadIn = start - dir * (plane ? 6000f : 1500f);
+            flight.LeadInPending = true;
+            StopJamming(flight);
+            if (flight.Mode != FlightMode.Cargo && flight.Mode != FlightMode.Route) flight.PreviousMode = flight.Mode;
+            flight.Route.Clear();
+            flight.Route.Add(flight.LeadIn);
+            flight.Mode = FlightMode.Route;
+            flight.Adopted = false;
+            Host.LogInfo("[flight] " + flight.Name + " · airdrop along " + length.ToString("0") + " m, " + items +
+                " item(s) " + flight.DropSpacing.ToString("0") + " m apart · leading in from " + (plane ? "6" : "1.5") + " km");
+        }
+
+        // The lead-in reached: the drop proper, from the start of its stretch.
+        // For a Chimera-type state the point is the middle of the stretch, and
+        // it lets the whole load go on the one pass.
+        internal static bool LeadInReached(Flight flight, GlobalPosition leg)
+        {
+            if (flight == null || !flight.LeadInPending || FastMath.Distance(leg, flight.LeadIn) > 50f) return false;
+            flight.LeadInPending = false;
+            bool plane = FixedWingDrops.CanAirdrop(flight.Aircraft);
+            GlobalPosition point = plane
+                ? flight.DropLineStart + (flight.DropLineEnd - flight.DropLineStart) * 0.5f
+                : flight.DropLineStart;
+            FlightMode previous = flight.PreviousMode;
+            deliveringAlong = true;
+            try { Deliver(flight, point, true); }
+            finally { deliveringAlong = false; }
+            flight.PreviousMode = previous;
+            return true;
+        }
+
+        private static bool deliveringAlong;
 
         // Containers, pallets, troops: whatever the cargo stations still hold.
         internal static int CargoAboard(Aircraft aircraft)
@@ -1249,6 +1313,7 @@ namespace NOrders
         {
             if (flight == null) return;
             flight.Target = null;
+            flight.HasDropLine = flight.LeadInPending = false;
             // Back to what it was doing, where it was doing it: the task area
             // it was sent to, not wherever the attack or the egress ended. Only
             // a flight with no earlier task holds where it is.

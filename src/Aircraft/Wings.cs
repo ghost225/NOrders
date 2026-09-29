@@ -483,9 +483,16 @@ namespace NOrders
             Flight lead = Led(flight);
             if (lead == null) return;
             var carriers = new List<Flight>();
+            var roll = new System.Text.StringBuilder("[wing] " + (lead.Wing ?? lead.Name) + " · " + (airdrop ? "airdrop" : "landing") + " ordered ·");
             foreach (Flight member in Wings.Group(lead))
-                if (FlightOrders.CanDeliver(member.Aircraft) && FlightOrders.CargoAboard(member.Aircraft) > 0)
-                    carriers.Add(member);
+            {
+                bool can = FlightOrders.CanDeliver(member.Aircraft);
+                int aboard = FlightOrders.CargoAboard(member.Aircraft);
+                roll.Append(" ").Append(member.Name).Append(" cargo ").Append(aboard).Append(can ? "" : " (cannot deliver)")
+                    .Append(" was ").Append(member.Mode).Append(" in ").Append(FlightOrders.FirstPilot(member.Aircraft)?.currentState?.GetType().Name ?? "?").Append(";");
+                if (can && aboard > 0) carriers.Add(member);
+            }
+            Host.LogInfo(roll.ToString());
             if (carriers.Count <= 1 && (carriers.Count == 0 || carriers[0] == lead))
             {
                 FlightOrders.Deliver(lead, where, airdrop);
@@ -518,6 +525,24 @@ namespace NOrders
                 if (!airdrop) carriers[i].CargoSearch = LandingSearch;
             }
             Host.Say((lead.Wing ?? lead.Name) + " · " + carriers.Count + " aircraft " + (airdrop ? "airdropping abreast" : "landing, each to its own spot"));
+        }
+
+        // Along a line: every aircraft with cargo takes an equal stretch of
+        // it, in order down the line, and runs in along it. Those with
+        // nothing keep formation; a lead with nothing holds over the line.
+        public static void DeliverAlong(Flight flight, GlobalPosition start, GlobalPosition end)
+        {
+            Flight lead = Led(flight);
+            if (lead == null) return;
+            var carriers = new List<Flight>();
+            foreach (Flight member in Wings.Group(lead))
+                if (FlightOrders.CanDeliver(member.Aircraft) && FlightOrders.CargoAboard(member.Aircraft) > 0) carriers.Add(member);
+            if (carriers.Count == 0) { FlightOrders.DeliverAlong(lead, start, end); return; }
+            if (!carriers.Contains(lead)) FlightOrders.SetArea(lead, start + (end - start) * 0.5f, 2000f);
+            int n = carriers.Count;
+            for (int i = 0; i < n; i++)
+                FlightOrders.DeliverAlong(carriers[i], start + (end - start) * ((float)i / n), start + (end - start) * ((i + 1f) / n));
+            Host.Say((lead.Wing ?? lead.Name) + " · " + n + " aircraft airdropping along the line");
         }
 
         public static void SetConfined(Flight flight, bool confined)
