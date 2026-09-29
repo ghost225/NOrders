@@ -48,6 +48,7 @@ namespace NOrders
         }
 
         private AircraftParameters parameters;
+        private float recoveringSince = -1f;
 
         // The native combat and landing states never touch the throttle -- an
         // AI jet cruises flat out -- so whatever formation keeping left it at
@@ -131,6 +132,35 @@ namespace NOrders
                 controlInputs.throttle = Time.timeSinceLevelLoad < flight.ThrottleCutUntil ? IrDefence.EvasionThrottle(aircraft)
                     : flight.Mode == FlightMode.Strike || flight.Mode == FlightMode.Egress ? 1f
                     : CruiseThrottle();
+
+            // Energy first. The native pilot hands an aircraft back from a
+            // radar evasion low and slow -- it dives to the deck at full power
+            // and is reclaimed wherever the shot left it -- and a fighter put
+            // straight into a three-kilometre orbit at cruise power from there
+            // went into the ground twice. Below corner speed or below a safe
+            // height, and not on an attack run: full power, wings near level,
+            // a gentle climb toward the ordered height, nothing else until it
+            // has the speed back.
+            if (aircraft.autopilot is AutopilotPlane && flight.Mode != FlightMode.Strike && flight.Mode != FlightMode.Formation)
+            {
+                float corner = parameters != null ? parameters.cornerSpeed : 0f;
+                bool slow = corner > 0f && aircraft.speed < corner * 1.15f;
+                bool low = aircraft.radarAlt < 150f && flight.Mode != FlightMode.Egress;
+                if ((slow || low) && !flight.EvadingInfrared)
+                {
+                    controlInputs.throttle = 1f;
+                    Vector3 ahead = Flat(aircraft.transform.forward);
+                    if (ahead.sqrMagnitude < 0.01f) ahead = Vector3.forward;
+                    float ordered = flight.Altitude;
+                    // Climb no more than 300 m above where it is: speed comes first.
+                    flight.Altitude = Mathf.Clamp(aircraft.radarAlt + 300f, MinimumClearance, Mathf.Max(ordered, MinimumClearance));
+                    if (recoveringSince < 0f) { recoveringSince = Time.timeSinceLevelLoad; Tracing.Flight("[flight] " + flight.Name + " · recovering energy · " + aircraft.speed.ToString("0") + " m/s at " + aircraft.radarAlt.ToString("0") + " m"); }
+                    Steer(aircraft.GlobalPosition() + ahead.normalized * 5000f, default, 30f);
+                    flight.Altitude = ordered;
+                    return;
+                }
+            }
+            recoveringSince = -1f;
 
             // A heat-seeker inbound: afterburner out (above), the shot on the
             // beam, flares going (IrDefence). Not on a run-in, which is held;
