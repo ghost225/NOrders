@@ -150,11 +150,14 @@ namespace NOrders
             // a run-in. The threshold sits at corner speed itself: 1.25 times
             // it put a mod fighter with a 150 m/s corner speed into permanent
             // recovery, wandering off station at full power.
-            if (aircraft.autopilot is AutopilotPlane && flight.Mode != FlightMode.Strike)
+            // On a strike the height is the run's business, but a stall is
+            // nobody's: a loaded fighter fell into the sea at 74 m/s straight
+            // after its stand-off launch.
+            if (aircraft.autopilot is AutopilotPlane)
             {
                 float corner = parameters != null ? parameters.cornerSpeed : 0f;
                 bool slow = corner > 0f && aircraft.speed < corner * 1.05f;
-                bool low = aircraft.radarAlt < 150f && flight.Mode != FlightMode.Egress;
+                bool low = aircraft.radarAlt < 150f && flight.Mode != FlightMode.Egress && flight.Mode != FlightMode.Strike;
                 if ((slow || low) && !flight.EvadingInfrared)
                 {
                     controlInputs.throttle = 1f;
