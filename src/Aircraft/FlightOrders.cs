@@ -584,7 +584,7 @@ namespace NOrders
                 CreditKills(found);
                 Rename(flight, request.Callsign ?? Callsigns.Suggest(found.definition));
                 Wings.Joined(flight);
-                Host.LogInfo("[flight] adopted " + flight.Name + " from " + Airfields.NameOf(request.Field));
+                Host.LogInfo("[flight] adopted " + flight.Name + " from " + Airfields.NameOf(request.Field) + TakeoffCheck.Actual(found));
             }
 
             // Install our state once the aircraft is actually flying: taking it

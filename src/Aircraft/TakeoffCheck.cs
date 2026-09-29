@@ -10,6 +10,8 @@ namespace NOrders
         internal float Gross, MaxWeight, ThrustToWeight;
         internal float Roll, Runway;            // metres; Roll 0 when thrust alone lifts it
         internal bool SkiJump, Deck, Vtol;
+        internal float DeckWind;                // m/s of the ship's own speed over the deck
+        internal float Scaled;                  // the take-off distance scaled by weight, for comparison
         internal TakeoffVerdict Verdict;
         internal string Line;
     }
@@ -25,11 +27,13 @@ namespace NOrders
     // into the water. A load that flies off a land runway may not fly off a
     // ship.
     //
-    // The estimate: gross weight from the empty airframe, the fuel and the
-    // stores; the airframe's own takeoff distance scaled by weight squared
-    // (flying speed goes with the root of weight, acceleration against it);
-    // shortened by a ski jump, and for a VTOL airframe by the share of its
-    // weight its thrust carries. Thrust above weight lifts it off anywhere.
+    // The estimate: gross weight the loadout screen's way -- the airframe's
+    // parts, the fuel, and what each mount really adds; then the run to
+    // flying speed at full reheat (flying speed with the root of weight, less
+    // the ship's own speed over the deck), or failing a thrust figure the
+    // airframe's take-off distance scaled by weight squared; shortened by a
+    // ski jump, and for a VTOL airframe by the share of its weight its thrust
+    // carries. Thrust above weight lifts it off anywhere.
     // It is an estimate, and it says so; the numbers are logged at launch so
     // they can be checked against what actually happens.
     internal static class TakeoffCheck
@@ -45,9 +49,13 @@ namespace NOrders
             if (prefab == null) return result;
 
             result.MaxWeight = definition.aircraftInfo.maxWeight;
-            // A tank's fuel is added to its part's mass when it is filled, so a
-            // drop tank's mount lists only the empty tank: its fuel goes on too.
-            result.Gross = definition.aircraftInfo.emptyWeight +
+            // The same sum the game's loadout screen shows: the airframe's
+            // parts, then what fuel and each mount add to them. A tank's fuel
+            // is added to its part's mass when it is filled, so a drop tank's
+            // mount lists only the empty tank: its fuel goes on too.
+            float empty = prefab.GetPrefabMass();
+            if (empty <= 0f) empty = definition.aircraftInfo.emptyWeight;
+            result.Gross = empty +
                 (Fuel(prefab) + ExternalFuel(plan)) * Mathf.Clamp01(plan.Fuel) + Stores(prefab, plan);
             float thrust = MaxThrust(prefab);
             result.ThrustToWeight = thrust > 0f && result.Gross > 0f ? thrust / (result.Gross * Gravity) : 0f;
@@ -87,7 +95,30 @@ namespace NOrders
                 return result;
             }
             float share = result.Gross / result.MaxWeight;
-            float roll = reference * share * share;
+            // A ship under way puts its own speed over the deck as a headwind:
+            // the run only has to make up the rest of flying speed.
+            Ship ship = result.Deck ? Airfields.ShipOf(field) : null;
+            float takeoffSpeed = definition.aircraftParameters.takeoffSpeed;
+            if (ship != null && ship.rb != null && takeoffSpeed > 1f)
+                result.DeckWind = Mathf.Clamp(Vector3.Dot(ship.rb.velocity, ship.transform.forward), 0f, takeoffSpeed * 0.8f);
+
+            // From the airframe's own take-off distance, by weight squared --
+            // what the estimate used to be, kept in the log to compare.
+            float scaled = reference * share * share;
+            if (result.DeckWind > 0f) { float rest = 1f - result.DeckWind / takeoffSpeed; scaled *= rest * rest; }
+            result.Scaled = scaled;
+
+            // From thrust, when it is known: the AI takes off in full reheat, and
+            // the thrust read here includes it. Flying speed goes with the root
+            // of weight; static thrust is taken at four fifths for what a jet
+            // loses as it gathers speed, less rolling friction.
+            float roll = scaled;
+            float accel = Gravity * (result.ThrustToWeight * 0.8f - 0.04f);
+            if (result.ThrustToWeight > 0f && takeoffSpeed > 1f)
+            {
+                float needed = Mathf.Max(takeoffSpeed * Mathf.Sqrt(share) - result.DeckWind, 0f);
+                roll = accel > 0.1f ? needed * needed / (2f * accel) : float.MaxValue;
+            }
             if (result.SkiJump) roll *= 0.7f;
             if (result.Vtol && result.ThrustToWeight > 0f) roll *= Mathf.Max(0.15f, 1f - result.ThrustToWeight);
             result.Roll = roll;
@@ -113,10 +144,23 @@ namespace NOrders
             return result;
         }
 
+        // What a spawned aircraft really weighs, the loadout screen's way, to
+        // set against the estimate logged at launch.
+        internal static string Actual(Aircraft aircraft)
+        {
+            if (aircraft == null) return "";
+            float gross = 0f;
+            foreach (UnitPart part in aircraft.GetAllParts()) if (part != null) gross += part.mass;
+            return " · gross " + gross.ToString("0") + " kg of " +
+                (aircraft.definition?.aircraftInfo != null ? aircraft.definition.aircraftInfo.maxWeight.ToString("0") : "?") + " max";
+        }
+
         internal static string Trace(TakeoffEstimate e) =>
             "takeoff estimate · gross " + e.Gross.ToString("0") + " kg / max " + e.MaxWeight.ToString("0") +
             " · T/W " + e.ThrustToWeight.ToString("0.00") + (e.Vtol ? " (VTOL)" : "") +
             " · run " + e.Roll.ToString("0") + " m vs " + e.Runway.ToString("0") + " m" +
+            (e.DeckWind > 0f ? " with " + e.DeckWind.ToString("0") + " m/s over the deck" : "") +
+            " (by weight alone " + e.Scaled.ToString("0") + " m)" +
             (e.SkiJump ? " ski jump" : "") + (e.Deck ? " deck" : "") + " · " + e.Verdict;
 
         // Fuel aboard against internal capacity. The game's own fuel level is
@@ -183,8 +227,39 @@ namespace NOrders
             {
                 if (station.Selected == null || station.Index < 0 || station.Index >= sets.Length) continue;
                 int points = sets[station.Index]?.hardpoints != null ? Mathf.Max(1, sets[station.Index].hardpoints.Count) : 1;
-                mass += Mathf.Max(station.Selected.mass, station.Selected.emptyMass) * points;
+                mass += MountMass(station.Selected) * points;
             }
+            return mass;
+        }
+
+        // What a mount adds to its hardpoint's part when it is fitted: its own
+        // empty mass, then each weapon in it -- a missile's mass, a gun's full
+        // ammunition, a vehicle's whole prefab. Worked out the way the game
+        // applies it rather than read from the mount's mass field, which for
+        // cargo gains the vehicle's mass again every time the mount is
+        // initialised -- how a normal helicopter load came out tons over.
+        private static readonly Dictionary<WeaponMount, float> mountMass = new Dictionary<WeaponMount, float>();
+
+        internal static float MountMass(WeaponMount mount)
+        {
+            if (mount == null) return 0f;
+            if (mountMass.TryGetValue(mount, out float known)) return known;
+            float mass = mount.emptyMass;
+            bool vehicle = false;
+            if (mount.prefab != null)
+                foreach (Weapon weapon in mount.prefab.GetComponentsInChildren<Weapon>(true))
+                {
+                    if (weapon is MountedCargo cargo)
+                    {
+                        Unit unit = cargo.cargo != null && cargo.cargo.unitPrefab != null ? cargo.cargo.unitPrefab.GetComponent<Unit>() : null;
+                        if (unit != null) { mass += unit.GetPrefabMass(); vehicle = true; }
+                    }
+                    else if (weapon.info != null) mass += weapon.info.massPerRound * Mathf.Max(1, weapon.GetFullAmmo());
+                }
+            // A cargo mount carrying units some other way: their mass, counted once.
+            if (mount.Cargo && !vehicle && mount.prefab != null)
+                foreach (Unit unit in mount.prefab.GetComponentsInChildren<Unit>(true)) mass += unit.GetMass();
+            mountMass[mount] = mass;
             return mass;
         }
 

@@ -40,7 +40,7 @@ namespace NOrders
             if (loadout == null) return;                                // an AI spawn
             Flight claimed = FlightOrders.ClaimLaunch(loadout, aircraft);
             if (claimed != null)
-                Tracing.Deck("[deck] launch identified · " + claimed.Name);
+                Host.LogInfo("[deck] launch identified · " + claimed.Name + TakeoffCheck.Actual(aircraft));
         }
     }
 }
