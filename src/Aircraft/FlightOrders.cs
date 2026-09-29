@@ -430,7 +430,9 @@ namespace NOrders
         // in the air the tick installs our state as after any launch.
         public static Flight Adopt(Aircraft aircraft, Airbase home, string callsign, string wing = null)
         {
-            if (aircraft == null || aircraft.disabled) return null;
+            if (aircraft == null || aircraft.disabled || aircraft.Player != null) return null;
+            Pilot crew = FirstPilot(aircraft);
+            if (crew != null && (crew.playerControlled || crew.currentState is PilotPlayerState)) return null;
             Flight existing = Of(aircraft);
             if (existing != null) return existing;
             if (!Ownership.Claim(aircraft)) return null;
@@ -865,6 +867,11 @@ namespace NOrders
                 if (!DeckTraffic.CameFrom(request.Field, aircraft)) continue;
                 Pilot crew = FirstPilot(aircraft);
                 if (crew == null || crew.playerControlled) continue;
+                // Never a player's aircraft: one rolling for take-off from the
+                // same field as our launch, same type, was matched and flown
+                // out from under the player. The flag above is not yet set at
+                // that moment; the player reference and the state are.
+                if (aircraft.Player != null || crew.currentState is PilotPlayerState) continue;
                 // Close by: it came off this field rather than another one.
                 if (FastMath.Distance(aircraft.GlobalPosition(), Airfields.PositionOf(request.Field)) >
                     Mathf.Max(1200f, request.Field.GetRadius())) continue;
