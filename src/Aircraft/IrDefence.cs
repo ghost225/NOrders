@@ -89,6 +89,38 @@ namespace NOrders
             flight.NextPreFlare = now + Tuning.PreFlareInterval;
         }
 
+        // The power to hold while a heat-seeker is on us: just under where the
+        // afterburner lights, read off the aircraft's own nozzles, so the
+        // engine is as cool as it gets without the aircraft falling out of
+        // the sky -- idling through a hard turn left fighters at eighty
+        // metres a second, and two went into the sea. Below corner speed,
+        // full power regardless: a stall is a surer death than a warm engine.
+        private static readonly Dictionary<AircraftDefinition, float> evasionThrottle = new Dictionary<AircraftDefinition, float>();
+
+        internal static float EvasionThrottle(Aircraft aircraft)
+        {
+            if (aircraft == null) return 0.6f;
+            AircraftParameters parameters = aircraft.GetAircraftParameters();
+            if (parameters != null && parameters.cornerSpeed > 0f && aircraft.speed < parameters.cornerSpeed * 1.05f) return 1f;
+            AircraftDefinition def = aircraft.definition;
+            if (def != null && evasionThrottle.TryGetValue(def, out float known)) return known;
+            float start = 1f;
+            foreach (JetNozzle nozzle in aircraft.GetComponentsInChildren<JetNozzle>(true))
+            {
+                if (!(Traverse.Create(nozzle).Field("afterburners").GetValue() is IList burners)) continue;
+                foreach (object burner in burners)
+                {
+                    if (burner == null) continue;
+                    float at = Traverse.Create(burner).Field("throttleStart").GetValue<float>();
+                    if (at > 1f) at /= 100f;                       // the field's default reads as a percentage
+                    if (at > 0f && at < start) start = at;
+                }
+            }
+            float throttle = start < 1f ? Mathf.Clamp(start - 0.05f, 0.4f, 0.85f) : 0.6f;
+            if (def != null) evasionThrottle[def] = throttle;
+            return throttle;
+        }
+
         // Only launchers the faction actually has a position for, and only
         // their known position: nothing here reveals a hidden MANPADS.
         private static bool IrLauncherInReach(Aircraft aircraft)
@@ -210,7 +242,7 @@ namespace NOrders
                 if (flight == null || Host.IsFlownByPlayer(flight)) return true;
                 ControlInputs inputs = InputsOf(__instance);
                 if (inputs != null && aircraft.autopilot is AutopilotPlane)
-                    inputs.throttle = Time.timeSinceLevelLoad < flight.ThrottleCutUntil ? 0f : 1f;
+                    inputs.throttle = Time.timeSinceLevelLoad < flight.ThrottleCutUntil ? IrDefence.EvasionThrottle(aircraft) : 1f;
                 return false;
             }
             catch (Exception ex) { Guard.Failed(Name, ex); return true; }

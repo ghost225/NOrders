@@ -128,16 +128,16 @@ namespace NOrders
             // Full power where speed matters -- the run-in and the escape --
             // and cruise power everywhere else.
             if (aircraft.autopilot is AutopilotPlane && flight.Mode != FlightMode.Formation)
-                controlInputs.throttle = Time.timeSinceLevelLoad < flight.ThrottleCutUntil ? 0f
+                controlInputs.throttle = Time.timeSinceLevelLoad < flight.ThrottleCutUntil ? IrDefence.EvasionThrottle(aircraft)
                     : flight.Mode == FlightMode.Strike || flight.Mode == FlightMode.Egress ? 1f
                     : CruiseThrottle();
 
-            // A heat-seeker inbound: engines cold (above), the shot on the
+            // A heat-seeker inbound: afterburner out (above), the shot on the
             // beam, flares going (IrDefence). Not on a run-in, which is held;
             // a wingman leaves the formation for it and rejoins after.
             if (flight.EvadingInfrared && flight.Mode != FlightMode.Strike)
             {
-                if (aircraft.autopilot is AutopilotPlane) controlInputs.throttle = 0f;
+                if (aircraft.autopilot is AutopilotPlane) controlInputs.throttle = IrDefence.EvasionThrottle(aircraft);
                 FlyBeam(flight.ThreatMissile);
                 return;
             }
@@ -284,7 +284,9 @@ namespace NOrders
         // and runs at the egress height instead.
         // Put the missile on the beam: ninety degrees off its bearing, on
         // whichever side is the smaller turn, holding the height it has --
-        // no climb to bleed the speed, no dive into the ground. From abeam
+        // no climb to bleed the speed, no dive into the ground -- at a bank
+        // that keeps the speed on (the first cut, idle and eighty degrees,
+        // left fighters wallowing at eighty metres a second). From abeam
         // the seeker sees the flares well apart from the aircraft and the
         // engines at their coolest aspect.
         private void FlyBeam(Missile missile)
@@ -297,7 +299,7 @@ namespace NOrders
             Vector3 beam = Vector3.Dot(forward, left) >= 0f ? left : -left;
             float ordered = flight.Altitude;
             flight.Altitude = Mathf.Max(Mathf.Min(aircraft.radarAlt, ordered), MinimumClearance);
-            Steer(aircraft.GlobalPosition() + beam * 4000f, default, 80f);
+            Steer(aircraft.GlobalPosition() + beam * 4000f, default, 60f);
             flight.Altitude = ordered;
         }
 
