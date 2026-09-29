@@ -401,6 +401,33 @@ namespace NOrders
             return null;
         }
 
+        // An aircraft that already exists -- placed by the mission, restored
+        // from a save, spawned by a scenario event -- taken on as a flight of
+        // ours as it is. On the ground it is treated as parked at its home;
+        // in the air the tick installs our state as after any launch.
+        public static Flight Adopt(Aircraft aircraft, Airbase home, string callsign, string wing = null)
+        {
+            if (aircraft == null || aircraft.disabled) return null;
+            Flight existing = Of(aircraft);
+            if (existing != null) return existing;
+            if (!Ownership.Claim(aircraft)) return null;
+            var flight = new Flight
+            {
+                Aircraft = aircraft,
+                Home = home,
+                Wing = wing,
+                Mode = FlightMode.Orbit,
+                OrbitCentre = home != null ? Airfields.PositionOf(home) : aircraft.GlobalPosition(),
+                Altitude = Tuning.DefaultAltitude,
+                OrbitRadius = Tuning.DefaultAreaRadius
+            };
+            flights.Add(flight);
+            CreditKills(aircraft);
+            Rename(flight, callsign ?? Callsigns.Suggest(aircraft.definition));
+            Wings.Joined(flight);
+            return flight;
+        }
+
         internal static void RenameWing(string wing, string name)
         {
             foreach (Pending request in pending)
