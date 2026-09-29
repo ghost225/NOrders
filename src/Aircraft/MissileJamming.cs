@@ -24,9 +24,9 @@ namespace NOrders
     // keeps its aim: the game's own pilot, evading, would otherwise turn it.
     internal static class MissileJamming
     {
-        private static readonly Dictionary<JammingPod, Unit> assigned = new Dictionary<JammingPod, Unit>();
-        private static readonly Dictionary<JammingPod, WeaponStation> stations = new Dictionary<JammingPod, WeaponStation>();
-        private static readonly Dictionary<JammingPod, Aircraft> owners = new Dictionary<JammingPod, Aircraft>();
+        private static readonly Dictionary<Weapon, Unit> assigned = new Dictionary<Weapon, Unit>();
+        private static readonly Dictionary<Weapon, WeaponStation> stations = new Dictionary<Weapon, WeaponStation>();
+        private static readonly Dictionary<Weapon, Aircraft> owners = new Dictionary<Weapon, Aircraft>();
         private static readonly HashSet<Missile> announced = new HashSet<Missile>();
         private static readonly List<Missile> inbound = new List<Missile>();
         private static readonly List<Unit> tasks = new List<Unit>();
@@ -35,11 +35,15 @@ namespace NOrders
 
         internal struct Pod
         {
-            internal JammingPod Weapon;
+            internal Weapon Weapon;
             internal WeaponStation Station;
         }
 
-        // Every jamming pod on the aircraft, whichever station it hangs on.
+        // Every jammer on the aircraft, whichever station it is on: anything
+        // the game flags as a jammer -- any airframe, any mod's jamming
+        // weapon, a jammer built into a fixed hardpoint -- as well as the
+        // game's own JammingPod however it is listed. Aimed through the base
+        // Weapon calls, so a mod's own jammer class works too.
         internal static List<Pod> Pods(Aircraft aircraft)
         {
             var pods = new List<Pod>();
@@ -47,8 +51,9 @@ namespace NOrders
             foreach (WeaponStation station in aircraft.weaponStations)
             {
                 if (station?.Weapons == null) continue;
+                bool flagged = station.WeaponInfo != null && station.WeaponInfo.jammer;
                 foreach (Weapon weapon in station.Weapons)
-                    if (weapon is JammingPod pod && pod != null) pods.Add(new Pod { Weapon = pod, Station = station });
+                    if (weapon != null && (flagged || weapon is JammingPod)) pods.Add(new Pod { Weapon = weapon, Station = station });
             }
             return pods;
         }
@@ -65,7 +70,7 @@ namespace NOrders
             foreach (Pod pod in Pods(aircraft))
             {
                 float here = 0f;
-                if (Falloff?.GetValue(pod.Weapon) is AnimationCurve curve && curve.length > 0)
+                if (pod.Weapon is JammingPod && Falloff?.GetValue(pod.Weapon) is AnimationCurve curve && curve.length > 0)
                 {
                     float end = curve[curve.length - 1].time, best = 0f;
                     for (float d = 0f; d <= end; d += end / 64f) best = Mathf.Max(best, curve.Evaluate(d));
@@ -79,21 +84,23 @@ namespace NOrders
             return reach == float.MaxValue ? 0f : reach;
         }
 
-        internal static bool Aimed(JammingPod pod) =>
+        internal static bool Aimed(Weapon pod) =>
             pod != null && assigned.TryGetValue(pod, out Unit target) && target != null && !target.disabled;
 
         internal static void Tick()
         {
-            if (Time.timeSinceLevelLoad >= nextChoice)
+            bool choose = Time.timeSinceLevelLoad >= nextChoice;
+            if (choose)
             {
                 nextChoice = Time.timeSinceLevelLoad + 0.25f;
                 Choose();
             }
+            SelfProtection(choose);
 
             // A pod switches itself off unless fired again each frame.
-            foreach (KeyValuePair<JammingPod, Unit> entry in assigned)
+            foreach (KeyValuePair<Weapon, Unit> entry in assigned)
             {
-                JammingPod pod = entry.Key;
+                Weapon pod = entry.Key;
                 Unit target = entry.Value;
                 if (pod == null || target == null || target.disabled) continue;
                 if (!owners.TryGetValue(pod, out Aircraft aircraft) || aircraft == null || aircraft.disabled) continue;
@@ -105,6 +112,48 @@ namespace NOrders
                     pod.Fire(aircraft, target, aircraft.rb != null ? aircraft.rb.velocity : Vector3.zero, station, default(GlobalPosition));
                 }
                 finally { Aiming = false; }
+            }
+        }
+
+        // Self-protection jammers (RadarJammer, a countermeasure many airframes
+        // carry built in) raise the aircraft's own ECM, which breaks a radar
+        // seeker's lock when it is close. The native pilot runs them while it
+        // evades; under our own state nothing did. Run them while a radar
+        // missile is coming at one of our flights we are flying ourselves.
+        private static readonly Dictionary<Aircraft, RadarJammer[]> ecm = new Dictionary<Aircraft, RadarJammer[]>();
+        private static readonly HashSet<Aircraft> underThreat = new HashSet<Aircraft>();
+        private const float EcmFrom = 15000f;
+
+        private static void SelfProtection(bool choose)
+        {
+            if (choose)
+            {
+                underThreat.Clear();
+                foreach (Flight flight in FlightOrders.All())
+                {
+                    Aircraft aircraft = flight.Aircraft;
+                    if (aircraft == null || aircraft.disabled || flight.Interrupted || Host.IsFlownByPlayer(flight)) continue;
+                    if (!ecm.TryGetValue(aircraft, out RadarJammer[] jammers)) ecm[aircraft] = jammers = aircraft.GetComponentsInChildren<RadarJammer>(true);
+                    if (jammers.Length == 0) continue;
+                    foreach (Unit unit in UnitRegistry.allUnits)
+                    {
+                        if (!(unit is Missile missile) || missile.disabled || missile.targetID != aircraft.persistentID) continue;
+                        string seeker = missile.GetSeekerType();
+                        if (seeker != "ARH" && seeker != "SARH") continue;
+                        if (Vector3.Distance(missile.transform.position, aircraft.transform.position) > EcmFrom) continue;
+                        underThreat.Add(aircraft);
+                        break;
+                    }
+                }
+                var gone = new List<Aircraft>();
+                foreach (Aircraft aircraft in ecm.Keys) if (aircraft == null || aircraft.disabled) gone.Add(aircraft);
+                foreach (Aircraft aircraft in gone) ecm.Remove(aircraft);
+            }
+            // Like a pod, it switches off unless fired again (within 0.1 s).
+            foreach (Aircraft aircraft in underThreat)
+            {
+                if (aircraft == null || aircraft.disabled || !ecm.TryGetValue(aircraft, out RadarJammer[] jammers)) continue;
+                foreach (RadarJammer jammer in jammers) if (jammer != null) jammer.Fire();
             }
         }
 

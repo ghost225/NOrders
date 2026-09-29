@@ -1062,6 +1062,7 @@ namespace NOrders
             foreach (WeaponStation station in aircraft.weaponStations)
             {
                 if (station == null || station.Weapons == null) continue;
+                if (station.WeaponInfo != null && station.WeaponInfo.jammer) return station;
                 foreach (Weapon weapon in station.Weapons)
                     if (weapon is JammingPod) return station;
             }
