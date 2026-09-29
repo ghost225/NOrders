@@ -25,6 +25,9 @@ namespace NOrders
 
         // Stamped on units this mod owns (see Ownership).
         public static string ModId = "NOrders";
+        // What the game's unit strip shows as the pilot state of a flight
+        // this mod is flying.
+        public static string ModName = "Naval Power";
 
         // Whether kills by flights this mod adopts are credited to the local
         // player. True for a mod that launches flights on the player's behalf

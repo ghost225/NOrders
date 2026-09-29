@@ -21,7 +21,7 @@ namespace NOrders
         internal static void Install(Pilot pilot, Flight flight)
         {
             if (pilot == null || flight == null || pilot.aircraft == null) return;
-            var state = new NavalPilotState { flight = flight, stateDisplayName = "Naval Power" };
+            var state = new NavalPilotState { flight = flight, stateDisplayName = Host.ModName };
             state.Initialize(pilot);
             pilot.SwitchStateNew(state);
             Host.LogInfo("[flight] " + flight.Name + " under command · " + flight.Describe() + " · from " +
