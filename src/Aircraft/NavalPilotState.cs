@@ -646,6 +646,14 @@ namespace NOrders
             WeaponStation station = FlightOrders.NamedStation(aircraft, flight.PreferredWeapon) ??
                 (target != null ? FlightOrders.BestStationFor(aircraft, target) : null);
             if (FlightOrders.IsAirTarget(target)) { CompleteRunIn(pilot, "air target"); return; }
+            // A missile we launch ourselves: no dive, no pressing in.
+            WeaponInfo weapon = station?.WeaponInfo;
+            if (weapon != null && weapon.missile && !weapon.laserGuided && !weapon.bomb && station.Ammo > 0 &&
+                target != null && !target.disabled && hq != null && hq.TryGetKnownPosition(target, out GlobalPosition seen))
+            {
+                FlyStandoffLaunch(pilot, target, seen, station);
+                return;
+            }
             if (target == null || target.disabled || hq == null || !hq.TryGetKnownPosition(target, out GlobalPosition known) ||
                 !FlightOrders.RunInFor(station?.WeaponInfo, out float height, out float release, out bool straight))
             {
@@ -696,6 +704,65 @@ namespace NOrders
             flight.Altitude = height;
             Steer(aim);
             flight.Altitude = ordered;
+        }
+
+        // A missile strike with nothing shooting at us: fly at the ordered
+        // height to launch range and no closer, turn the target into the
+        // missile's launch cone, fire -- as the native pilot fires, through
+        // the weapon manager, a salvo 2.5 s apart until the game's own count
+        // of missiles needed for this target is away -- and leave. The native
+        // pilot, handed the attack, dove at the target to bring it into the
+        // cone and pressed on into the defences' reach; an EW-25 went from
+        // 4 km to 900 m and lost its track over the horizon. Anything it
+        // cannot launch at within a minute of reaching range goes to the
+        // native pilot as before.
+        private void FlyStandoffLaunch(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station)
+        {
+            WeaponInfo info = station.WeaponInfo;
+            TargetRequirements needs = info.targetRequirements;
+            GlobalPosition here = aircraft.GlobalPosition();
+            float range = Horizontal(known, here);
+            float launch = Mathf.Max(needs.maxRange * 0.85f, needs.minRange * 1.5f);
+
+            if (range < needs.minRange * 1.1f) { CompleteRunIn(pilot, "inside minimum range"); return; }
+            if (range > launch)
+            {
+                flight.InLaunchRangeSince = -1f;
+                Steer(known);                                  // at the ordered height: Steer holds it
+                return;
+            }
+            if (flight.InLaunchRangeSince < 0f) flight.InLaunchRangeSince = Time.timeSinceLevelLoad;
+            if (Time.timeSinceLevelLoad - flight.InLaunchRangeSince > 60f) { CompleteRunIn(pilot, "no launch in a minute"); return; }
+
+            // Nose onto the target, level: the cone is a 3D angle, and from
+            // height a distant target sits only a few degrees below.
+            Steer(known);
+            Vector3 toTarget = known - here;
+            float off = Vector3.Angle(aircraft.transform.forward, toTarget);
+            float cone = needs.minAlignment > 0f ? needs.minAlignment : 30f;
+            if (off > cone * 0.9f || Time.timeSinceLevelLoad - flight.LastLaunchAt < 2.5f) return;
+            if (aircraft.speed < needs.minOwnerSpeed) return;
+
+            if (flight.SalvoLeft <= 0)
+                flight.SalvoLeft = Mathf.Clamp(Mathf.CeilToInt(info.CalcAttacksNeeded(target)), 1, Mathf.Max(station.Ammo, 1));
+
+            aircraft.weaponManager.currentWeaponStation = station;
+            List<Unit> targets = aircraft.weaponManager.GetTargetList();
+            targets.Clear();
+            int found = CombatAI.LookForMissileTargets(aircraft, target, station, targets);
+            aircraft.weaponManager.TargetListChanged();
+            if (found <= 0) return;
+            int before = station.Ammo;
+            pilot.Fire();
+            flight.LastLaunchAt = Time.timeSinceLevelLoad;
+            if (station.Ammo < before || station.Ammo <= 0)
+            {
+                flight.SalvoLeft--;
+                Tracing.Flight("[flight] " + flight.Name + " · launched " + info.weaponName + " at " +
+                    (range / 1000f).ToString("0.0") + " km from " + aircraft.radarAlt.ToString("0") + " m · " +
+                    Mathf.Max(flight.SalvoLeft, 0) + " left in the salvo");
+            }
+            if (station.Ammo <= 0) flight.SalvoLeft = 0;
         }
 
         private void CompleteRunIn(Pilot pilot, string why)

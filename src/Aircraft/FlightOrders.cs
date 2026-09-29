@@ -39,6 +39,9 @@ namespace NOrders
         public bool Adopted;
         public Unit Target;                 // designated for a strike; for jamming, the first of JamTargets
         public readonly List<Unit> JamTargets = new List<Unit>();   // jamming: in priority order
+        internal int SalvoLeft;             // missiles still to fire in a standoff launch before egress
+        internal float LastLaunchAt = -10f;
+        internal float InLaunchRangeSince = -1f;
         public string PreferredWeapon;      // WeaponInfo.name, or null for whatever suits best
         public bool WarnedAboutTrack;
         public float StrikeStarted;
@@ -645,7 +648,8 @@ namespace NOrders
 
                 // A shot has left the aircraft: stop pressing. Not in an air
                 // fight, where turning away only hands the enemy the shot.
-                if (flight.Mode == FlightMode.Strike && flight.AmmoAtAttack >= 0 && !IsAirTarget(flight.Target))
+                // A standoff launch leaves once its whole salvo is away.
+                if (flight.Mode == FlightMode.Strike && flight.AmmoAtAttack >= 0 && !IsAirTarget(flight.Target) && flight.SalvoLeft <= 0)
                 {
                     int now = TotalAmmo(flight.Aircraft);
                     if (now >= 0 && now < flight.AmmoAtAttack) Egress(flight);
@@ -956,6 +960,8 @@ namespace NOrders
             flight.RunInDone = false;
             flight.SettingUp = false;
             flight.RunInStarted = Time.timeSinceLevelLoad;
+            flight.SalvoLeft = 0;
+            flight.InLaunchRangeSince = -1f;
             if (flight.Mode != FlightMode.Strike && flight.Mode != FlightMode.Egress) flight.PreviousMode = flight.Mode;
             flight.Target = target;
             flight.AmmoAtAttack = TotalAmmo(flight.Aircraft);
