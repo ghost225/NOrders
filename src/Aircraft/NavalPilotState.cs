@@ -420,7 +420,7 @@ namespace NOrders
         private void FlyJamming()
         {
             Unit target = flight.Target;
-            if (target == null || target.disabled) { FlyOrbit(aircraft.GlobalPosition()); return; }
+            if (Host.Dead(target)) { FlyOrbit(aircraft.GlobalPosition()); return; }
 
             // The flight's own task area, flown at its ordered height, if the
             // pods reach every target from all of it; if not, the area moves
@@ -687,12 +687,12 @@ namespace NOrders
             // A missile we launch ourselves: no dive, no pressing in.
             WeaponInfo weapon = station?.WeaponInfo;
             if (weapon != null && weapon.missile && !weapon.laserGuided && !weapon.bomb && station.Ammo > 0 &&
-                target != null && !target.disabled && hq != null && hq.TryGetKnownPosition(target, out GlobalPosition seen))
+                !Host.Dead(target) && hq != null && hq.TryGetKnownPosition(target, out GlobalPosition seen))
             {
                 FlyStandoffLaunch(pilot, target, seen, station);
                 return;
             }
-            if (target == null || target.disabled || hq == null || !hq.TryGetKnownPosition(target, out GlobalPosition known) ||
+            if (Host.Dead(target) || hq == null || !hq.TryGetKnownPosition(target, out GlobalPosition known) ||
                 !FlightOrders.RunInFor(station?.WeaponInfo, out float height, out float release, out bool straight))
             {
                 CompleteRunIn(pilot, "no run-in needed");

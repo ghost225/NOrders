@@ -292,7 +292,7 @@ namespace NOrders
                 case FlightMode.Orbit: return "Station area · " + UnitConverter.DistanceReading(OrbitRadius) +
                     (ConfineToArea ? "" : " · unrestricted");
                 case FlightMode.Station: return "Station on " + (StationShip != null ? ShipNames.Of(StationShip) : HomeName);
-                case FlightMode.Strike: return Target != null && !Target.disabled
+                case FlightMode.Strike: return !Host.Dead(Target)
                     ? "Strike · " + (Target.definition?.unitName ?? Target.name) : "Strike · target gone";
                 case FlightMode.Egress: return "Egressing · weapons away";
                 case FlightMode.Cargo: return SupplyShip != null ? "Naval supply · " + ShipNames.Of(SupplyShip)
@@ -301,7 +301,7 @@ namespace NOrders
                 {
                     var names = new List<string>();
                     foreach (Unit unit in JamTargets) if (unit != null && !unit.disabled) names.Add(unit.definition?.unitName ?? unit.name);
-                    if (names.Count == 0 && Target != null && !Target.disabled) names.Add(Target.definition?.unitName ?? Target.name);
+                    if (names.Count == 0 && !Host.Dead(Target)) names.Add(Target.definition?.unitName ?? Target.name);
                     return names.Count > 0 ? "Jamming · " + string.Join(", ", names) : "Jamming · target gone";
                 }
                 case FlightMode.Engage: return "Weapons free · AI engaging";
@@ -605,7 +605,7 @@ namespace NOrders
                     // A target gone leaves the rest; the last one gone ends the task.
                     int before = flight.JamTargets.Count;
                     flight.JamTargets.RemoveAll(u => u == null || u.disabled);
-                    if (flight.JamTargets.Count == 0 && flight.Target != null && !flight.Target.disabled)
+                    if (flight.JamTargets.Count == 0 && !Host.Dead(flight.Target))
                         flight.JamTargets.Add(flight.Target);
                     if (flight.JamTargets.Count == 0)
                     {
@@ -619,7 +619,7 @@ namespace NOrders
                     }
                 }
 
-                if (flight.Mode == FlightMode.Strike && (flight.Target == null || flight.Target.disabled))
+                if (flight.Mode == FlightMode.Strike && (Host.Dead(flight.Target)))
                 {
                     Host.LogInfo("[flight] " + flight.Name + " · target destroyed, breaking off");
                     BreakOff(flight);
@@ -677,14 +677,14 @@ namespace NOrders
                         flight.NextEgressPlan = Time.timeSinceLevelLoad + 2f;
                         PlanEgress(flight);
                     }
-                    bool clear = flight.Target == null || flight.Target.disabled ||
+                    bool clear = Host.Dead(flight.Target) ||
                         FastMath.Distance(flight.Aircraft.GlobalPosition(), flight.Target.GlobalPosition())
                             >= Tuning.StandoffMetres;
                     if (clear || Time.timeSinceLevelLoad >= flight.EgressUntil)
                     {
                         // Out of danger. Press again only with something left to
                         // press with, and only if the target is still there.
-                        bool rearmed = flight.Target != null && !flight.Target.disabled &&
+                        bool rearmed = !Host.Dead(flight.Target) &&
                             BestStationFor(flight.Aircraft, flight.Target) != null &&
                             Tuning.ReattackAfterEgress;
                         if (rearmed)

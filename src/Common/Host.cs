@@ -8,6 +8,10 @@ namespace NOrders
     // never reaches into a particular mod's UI or plugin.
     public static class Host
     {
+        // A unit that is gone for targeting purposes: removed, or destroyed
+        // and still tumbling. A wreck in the air kept a wing's missiles.
+        public static bool Dead(Unit unit) => unit == null || unit.disabled || unit.unitState == Unit.UnitState.Destroyed;
+
         public static Action<string> LogInfo = _ => { };
         public static Action<string> LogWarning = _ => { };
         public static Action<string> LogError = _ => { };
