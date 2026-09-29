@@ -265,7 +265,7 @@ namespace NOrders
             {
                 // Drawn from stock. Nobody pays.
             }
-            else if (Tuning.LaunchCostFromAllocation &&
+            else if (Host.PlayerDirected && Tuning.LaunchCostFromAllocation &&
                 GameManager.GetLocalPlayer<Player>(out payer) && payer != null)
             {
                 if (payer.Allocation < price)
@@ -330,7 +330,7 @@ namespace NOrders
 
         private static void Pay(Aircraft aircraft)
         {
-            if (!Tuning.SortieBonusOnRecovery || aircraft == null) return;
+            if (!Host.PlayerDirected || !Tuning.SortieBonusOnRecovery || aircraft == null) return;
             // Ours to reward: a flight this ship launched and commanded.
             Flight flight = FlightOrders.Of(aircraft);
             if (flight == null || aircraft.definition == null) return;

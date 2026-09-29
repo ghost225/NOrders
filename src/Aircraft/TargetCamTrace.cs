@@ -69,7 +69,7 @@ namespace NOrders
         {
             private static void Prefix(TargetCam __instance) =>
                 Guard.Run("Target camera trace: detach", () =>
-                    Host.LogInfo("[cam] a part detached · " + Describe(__instance)));
+                    Tracing.Deck("[cam] a part detached · " + Describe(__instance)));
         }
 
         [HarmonyPatch(typeof(TargetCam), "TargetCam_OnUnitDisable")]
@@ -77,7 +77,7 @@ namespace NOrders
         {
             private static void Prefix(TargetCam __instance) =>
                 Guard.Run("Target camera trace: unit disabled", () =>
-                    Host.LogInfo("[cam] its aircraft was disabled · " + Describe(__instance)));
+                    Tracing.Deck("[cam] its aircraft was disabled · " + Describe(__instance)));
         }
 
         // The rest of the chain, so a normal spawn and a takeover can be laid
@@ -121,7 +121,7 @@ namespace NOrders
         {
             private static void Prefix(TargetCam.OnCamToggle e) =>
                 Guard.Run("Target camera trace: screen told", () =>
-                    Host.LogInfo("[cam] screen told · " + (e.enabled ? "show " : "hide ") + e.camMode));
+                    Tracing.Deck("[cam] screen told · " + (e.enabled ? "show " : "hide ") + e.camMode));
         }
 
         [HarmonyPatch(typeof(TargetCam), "OnDestroy")]

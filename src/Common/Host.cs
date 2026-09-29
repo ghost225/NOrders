@@ -25,6 +25,7 @@ namespace NOrders
 
         // Stamped on units this mod owns (see Ownership).
         public static string ModId = "NOrders";
+
         // What the game's unit strip shows as the pilot state of a flight
         // this mod is flying.
         public static string ModName = "Naval Power";
@@ -35,5 +36,13 @@ namespace NOrders
         // are nobody's. Either way, only a flight of the player's own faction
         // is ever credited.
         public static bool CreditKillsToPlayer = true;
+
+        // Whether the local player directs this mod's units -- Naval Power:
+        // yes; an AI commander such as High Command: no. Off, nothing is paid
+        // to or charged to the player: no sortie bonus on recovery, and
+        // launches are paid for the faction's way, not from the player's
+        // allocation. (Kill credit has its own switch above.) Shipped without
+        // this, High Command's recoveries paid the player sortie bonuses.
+        public static bool PlayerDirected = false;
     }
 }
