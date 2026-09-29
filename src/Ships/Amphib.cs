@@ -512,6 +512,7 @@ namespace NOrders
                     Host.Say("Craft " + (i + 1) + " could not be launched");
                     continue;
                 }
+                Ownership.Claim(craft);
                 LastDeployed?.SetValue(hold, craft);
                 hold.enabled = true;                               // the rail runs while the craft is close
                 UnitStorage cargo = craft.GetComponentInChildren<UnitStorage>(true);

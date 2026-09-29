@@ -128,6 +128,7 @@ namespace NOrders
 
         internal static ShipEngagement Ensure(Ship ship)
         {
+            Ownership.Claim(ship);
             var state = ship.GetComponent<ShipEngagement>();
             if (state == null)
             {

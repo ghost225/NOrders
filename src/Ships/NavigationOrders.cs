@@ -23,6 +23,7 @@ namespace NOrders
         private static ShipRoute State(Ship ship, out string reason)
         {
             if (!CommandableShip.CanCommand(ship, out reason)) return null;
+            Ownership.Claim(ship);
             var state = ship.GetComponent<ShipRoute>();
             if (state == null)
             {

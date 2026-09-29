@@ -169,6 +169,7 @@ namespace NOrders
 
         internal static ShipWeapons Ensure(Ship ship)
         {
+            Ownership.Claim(ship);
             var state = ship.GetComponent<ShipWeapons>();
             if (state == null)
             {

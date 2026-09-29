@@ -379,6 +379,8 @@ namespace NOrders
                     Tracing.Deck("[deck] " + existing.Name + " · corrected from a proximity match");
                     return existing;
                 }
+                // Another mod's aircraft is not ours to adopt.
+                if (!Ownership.Claim(aircraft)) return null;
                 var flight = new Flight
                 {
                     Aircraft = aircraft,
@@ -488,6 +490,7 @@ namespace NOrders
                     (request.Definition?.unitName ?? "aircraft") + " · state " + (matched?.currentState?.GetType().Name ?? "none") +
                     " · alt " + found.radarAlt.ToString("0") + " m · speed " + found.speed.ToString("0") + " m/s");
                 pending.RemoveAt(i);
+                if (!Ownership.Claim(found)) continue;
                 var flight = new Flight
                 {
                     Aircraft = found,

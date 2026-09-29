@@ -51,6 +51,10 @@ namespace NOrders
             if (AirbaseField == null || LandingSpeed == null || LandingMode == null) return;
             var aircraft = StateAircraft?.GetValue(__instance) as Aircraft;
             if (!Tuning.CarrierApproachFix) return;
+            // A fix to the game's own behaviour for every aircraft: applied by
+            // the mod that owns this one, or by the steward if none does, so
+            // it is never scaled twice with two mods loaded.
+            if (!Ownership.Acts(aircraft)) return;
 
             // Only where the speed was actually just computed. The method this
             // follows runs every ten seconds for the whole approach, but it

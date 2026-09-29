@@ -12,7 +12,13 @@ namespace NOrders
     {
         internal static bool Is(Unit unit) =>
             unit is Ship ship && ship.GetComponent<ShipAI>() != null && ship.UnitCommand != null &&
-            ship.GetComponent<LandingCraftAI>() == null;
+            ship.GetComponent<LandingCraftAI>() == null && !Ownership.Theirs(ship);
+
+        // Our claim on a ship lasts as long as it is under our control.
+        internal static void ReleaseIfIdle(Ship ship)
+        {
+            if (ship != null && !Controlled(ship)) Ownership.Release(ship);
+        }
 
         internal static bool CanCommand(Unit unit, out string reason)
         {
@@ -26,6 +32,8 @@ namespace NOrders
             // sent and recalled from its carrier's Amphibious window.
             if (ship.GetComponent<LandingCraftAI>() != null)
             { reason = "Landing craft are run from their carrier's Amphibious window."; return false; }
+            if (Ownership.Theirs(ship))
+            { reason = "Another mod (" + Ownership.OwnerOf(ship) + ") is commanding this ship."; return false; }
             if (!MissionManager.IsRunning || ship.disabled || !ship.gameObject.activeInHierarchy)
             { reason = "This ship is not available in a running mission."; return false; }
             if (!GameManager.GetLocalPlayer<Player>(out var player) || player == null)

@@ -106,6 +106,7 @@ namespace NOrders
             foreach (TaskForce force in forces) used.Add(force.Name);
             string name = "Task Force";
             foreach (string candidate in Names) if (!used.Contains(candidate)) { name = candidate; break; }
+            Ownership.Claim(guide);
             var created = new TaskForce { Name = name, Guide = guide };
             forces.Add(created);
             Host.LogInfo("[tf] " + name + " formed on " + ShipNames.Of(guide));
@@ -121,6 +122,7 @@ namespace NOrders
             TaskForce existing = Of(ship);
             if (existing == force) { reason = ShipNames.Of(ship) + " is already in " + force.Name + "."; return false; }
             if (existing != null) Remove(ship);
+            if (!Ownership.Claim(ship)) { reason = "Another mod is commanding " + ShipNames.Of(ship) + "."; return false; }
             force.Escorts.Add(new Escort { Ship = ship });
             Layout(force);
             Host.LogInfo("[tf] " + ShipNames.Of(ship) + " joins " + force.Name);
@@ -238,6 +240,7 @@ namespace NOrders
             if (ship == null) return;
             var route = ship.GetComponent<ShipRoute>();
             if (route != null) route.SpeedCapKnots = float.PositiveInfinity;
+            CommandableShip.ReleaseIfIdle(ship);
         }
 
         private static void PromoteGuide(TaskForce force)

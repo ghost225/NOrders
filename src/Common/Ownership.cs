@@ -42,6 +42,42 @@ namespace NOrders
 
         public static bool Mine(Unit unit) => unit != null && OwnerOf(unit) == Host.ModId;
 
+        // Whether this mod should act on the unit: it owns it, or nobody does
+        // and this mod is the steward. A patch that fixes the game's own
+        // behaviour for everyone (a slower deck approach, say) must run once
+        // per unit, not once per mod loaded -- the steward is the one that
+        // does it for units no mod has claimed.
+        public static bool Acts(Unit unit)
+        {
+            if (unit == null) return false;
+            string owner = OwnerOf(unit);
+            return owner == null ? Steward : owner == Host.ModId;
+        }
+
+        // The first NOrders mod to ask becomes the steward for the session:
+        // a scene-independent marker object names it.
+        private const string StewardName = "__NOrders.Steward";
+        private static int stewardChecked = -1;
+        private static bool steward;
+
+        public static bool Steward
+        {
+            get
+            {
+                if (stewardChecked == Time.frameCount) return steward;
+                stewardChecked = Time.frameCount;
+                GameObject holder = GameObject.Find(StewardName);
+                if (holder == null)
+                {
+                    holder = new GameObject(StewardName);
+                    Object.DontDestroyOnLoad(holder);
+                    new GameObject(Host.ModId).transform.SetParent(holder.transform, false);
+                }
+                steward = holder.transform.childCount > 0 && holder.transform.GetChild(0).name == Host.ModId;
+                return steward;
+            }
+        }
+
         // Owned by some other mod: hands off.
         public static bool Theirs(Unit unit)
         {
