@@ -523,6 +523,7 @@ namespace NOrders
             Guard.Run("Laser defence", LaserDefence.Tick);
             Guard.Run("Moving deck recovery", MovingDeckRecovery.Tick);
             Guard.Run("Deck wave-off", DeckWaveOff.Tick);
+            Guard.Run("Fixed-wing drops", FixedWingDrops.Forget);
             for (int i = flights.Count - 1; i >= 0; i--)
                 if (flights[i].Aircraft == null || flights[i].Aircraft.disabled) flights.RemoveAt(i);
             foreach (Flight flight in flights)
@@ -729,6 +730,21 @@ namespace NOrders
                     // being sent home.
                     if (StillLeaving(pilot)) continue;
                     if (flight.SupplyShip != null && Replenishment.Delivered(flight)) continue;
+                    // An aeroplane: a mod's fixed-wing transport state, pointed
+                    // at our drop.
+                    if (pilot.pilotType == Pilot.PilotType.Plane)
+                    {
+                        if (!FixedWingDrops.Start(pilot))
+                        {
+                            Host.LogWarning("[flight] " + flight.Name + " cannot fly an airdrop; returning it to its previous task");
+                            Host.Say(flight.Name + " · cannot fly an airdrop");
+                            BreakOff(flight);
+                            continue;
+                        }
+                        Host.LogInfo("[flight] " + flight.Name + " · airdropping cargo");
+                        flight.Adopted = true;
+                        continue;
+                    }
                     // The game builds this state lazily, inside the helo combat
                     // state, the first time an aircraft notices cargo aboard.
                     // A flight we took under command on the climb-out has never
@@ -1119,14 +1135,16 @@ namespace NOrders
         }
 
         // The native transport state flies the delivery; we only tell it where.
+        // An aeroplane can only airdrop, whatever was asked for.
         public static void Deliver(Flight flight, GlobalPosition where, bool airdrop)
         {
             if (flight == null) return;
             if (!CanDeliver(flight.Aircraft))
             {
-                Host.Say(flight.Name + " · cannot fly a delivery; it has no hover");
+                Host.Say(flight.Name + " · " + WhyNoDelivery(flight.Aircraft));
                 return;
             }
+            if (FixedWingDrops.CanAirdrop(flight.Aircraft)) airdrop = true;
             StopJamming(flight);
             if (flight.Mode != FlightMode.Cargo) flight.PreviousMode = flight.Mode;
             flight.CargoPoint = where;
@@ -1200,10 +1218,23 @@ namespace NOrders
         // can hover. A fixed-wing aircraft carrying a container has no way to
         // deliver it, so the order is refused rather than accepted into a mode
         // nothing can fly.
+        //
+        // The exception is an aeroplane with a fixed-wing transport state
+        // loaded by a mod (FixedWingDrops): that one can airdrop.
         internal static bool CanDeliver(Aircraft aircraft)
         {
             Pilot crew = FirstPilot(aircraft);
-            return crew != null && crew.pilotType != Pilot.PilotType.Plane;
+            if (crew == null) return false;
+            return crew.pilotType != Pilot.PilotType.Plane || FixedWingDrops.CanAirdrop(aircraft);
+        }
+
+        public static string WhyNoDelivery(Aircraft aircraft)
+        {
+            Pilot crew = FirstPilot(aircraft);
+            if (crew != null && crew.pilotType == Pilot.PilotType.Plane && CargoAboard(aircraft) > 0)
+                return "cannot fly a delivery; no fixed-wing airdrop mod is loaded";
+            if (CargoAboard(aircraft) <= 0) return "has no cargo aboard";
+            return "cannot fly a delivery";
         }
 
         public static List<Flight> Carriers()

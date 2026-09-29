@@ -27,6 +27,10 @@ namespace NOrders
         internal Formation Formation = Formation.Screen;
         internal float Spacing = 1f;             // multiplier on the size-based gap
         internal bool FixedNorth;
+        // Screen pickets centre their arc on the nearest known enemy ship
+        // rather than the guide's course. Off by default: a formation that
+        // stayed put while the guide turned read as not turning at all.
+        internal bool PicketsFaceThreat;
 
         // The smoothed guide the stations hang off.
         internal GlobalPosition Centre;
@@ -59,6 +63,7 @@ namespace NOrders
         internal float OffStation;
         internal GlobalPosition Station;
         internal bool GivingWay;
+        internal bool Shoal;                     // its station was pulled in off shallow water
     }
 
     internal static class TaskForces
@@ -446,7 +451,7 @@ namespace NOrders
             GlobalPosition centre = force.LastSmooth >= 0f ? force.Centre : force.Guide.GlobalPosition();
             Vector3 course = force.LastSmooth >= 0f ? force.Course
                 : new Vector3(force.Guide.transform.forward.x, 0f, force.Guide.transform.forward.z).normalized;
-            float reference = slot.ThreatArc ? ThreatBearing(force)
+            float reference = slot.ThreatArc && force.PicketsFaceThreat ? ThreatBearing(force)
                 : force.FixedNorth ? 0f : Mathf.Atan2(course.x, course.z) * Mathf.Rad2Deg;
             float radians = (reference + slot.Bearing) * Mathf.Deg2Rad;
             return centre + new Vector3(Mathf.Sin(radians), 0f, Mathf.Cos(radians)) * slot.Range;
@@ -505,7 +510,8 @@ namespace NOrders
         }
 
         // Time-based, not per frame: a couple of seconds to follow the guide's
-        // position and eight for its course; under fire, a minute and more.
+        // position and eight for its course; under fire, a minute for the position
+        // and twenty seconds for the course.
         private static void Smooth(TaskForce force, float dt)
         {
             Ship guide = force.Guide;
@@ -528,7 +534,9 @@ namespace NOrders
             }
             force.LastSmooth = Time.timeSinceLevelLoad;
             float positionTau = force.UnderFire ? 60f : 2f;
-            float courseTau = force.UnderFire ? 90f : 8f;
+            // The course is only damped, not frozen, under fire: a guide turned
+            // on purpose still brings its stations round inside half a minute.
+            float courseTau = force.UnderFire ? 20f : 8f;
             float kp = 1f - Mathf.Exp(-dt / positionTau), kc = 1f - Mathf.Exp(-dt / courseTau);
             // The smoothed centre also moves with the guide's velocity, so it
             // does not lag a steadily steaming guide.
@@ -601,17 +609,57 @@ namespace NOrders
         internal static GlobalPosition StationOf(TaskForce force, Escort escort)
         {
             if (FollowsWake(force) && WakePoint(force, escort.Range, out GlobalPosition trail, out _)) return trail;
-            float reference = escort.ThreatArc ? ThreatBearing(force)
+            float reference = escort.ThreatArc && force.PicketsFaceThreat ? ThreatBearing(force)
                 : force.FixedNorth ? 0f : Mathf.Atan2(force.Course.x, force.Course.z) * Mathf.Rad2Deg;
             float radians = (reference + escort.Bearing) * Mathf.Deg2Rad;
             return force.Centre + new Vector3(Mathf.Sin(radians), 0f, Mathf.Cos(radians)) * escort.Range;
+        }
+
+        // A station over land or shoal water slides in towards the guide until
+        // it is over water deep enough for the escort; with none on the way,
+        // the escort falls in astern of the guide, in water the guide has just
+        // sailed through.
+        private static GlobalPosition KeepOffShoals(TaskForce force, Escort escort, GlobalPosition station)
+        {
+            float draft = Draft(escort.Ship);
+            if (Navigable(station, draft)) { NoteShoal(force, escort, false); return station; }
+            GlobalPosition centre = force.Centre;
+            for (float f = 0.8f; f > 0.05f; f -= 0.15f)
+            {
+                GlobalPosition nearer = centre + (station - centre) * f;
+                if (Navigable(nearer, draft)) { NoteShoal(force, escort, true); return nearer; }
+            }
+            NoteShoal(force, escort, true);
+            return centre - force.Course * Mathf.Max(escort.Range * 0.5f, Gap(force));
+        }
+
+        private static void NoteShoal(TaskForce force, Escort escort, bool shoal)
+        {
+            if (shoal == escort.Shoal) return;
+            escort.Shoal = shoal;
+            Tracing.Nav("[tf] " + force.Name + " · " + ShipNames.Of(escort.Ship) +
+                (shoal ? " · station over shallow water, keeping to deeper water" : " · back on its station"));
+        }
+
+        // Roughly how much water a ship needs, from its size, with a margin.
+        private static float Draft(Ship ship) => Mathf.Clamp(ship.maxRadius * 0.06f, 4f, 12f) + 3f;
+
+        // Sea floor at least `draft` below the surface. No ground found at all
+        // is open water.
+        internal static bool Navigable(GlobalPosition point, float draft)
+        {
+            Vector3 at = point.ToLocalPosition();
+            at.y = Datum.LocalSeaY;
+            if (!Physics.Linecast(at + Vector3.up * 400f, at - Vector3.up * (draft + 1f), out RaycastHit hit, PhysicsLayers.StaticsMask))
+                return true;
+            return hit.point.y < Datum.LocalSeaY - draft;
         }
 
         private static void Keep(TaskForce force, Escort escort)
         {
             Ship ship = escort.Ship;
             Ship guide = force.Guide;
-            GlobalPosition station = StationOf(force, escort);
+            GlobalPosition station = KeepOffShoals(force, escort, StationOf(force, escort));
             // In a column following the wake, "ahead" is along the track at the
             // station, not the guide's present course.
             Vector3 course = force.Course;
@@ -654,6 +702,15 @@ namespace NOrders
                 Vector3 across = gap - course * along;          // the sideways part of the gap
                 across = Vector3.ClampMagnitude(across, lead);
                 aim = here + course * lead + across;
+            }
+
+            // Nor at shallow water: a shorter lead, and failing that the
+            // station itself -- stopping there beats running aground.
+            float draft = Draft(ship);
+            if (!Navigable(aim, draft) || !Navigable(here + (aim - here) * 0.5f, draft))
+            {
+                GlobalPosition shorter = station + course * (lead * 0.35f);
+                aim = Navigable(shorter, draft) && Navigable(here + (shorter - here) * 0.5f, draft) ? shorter : station;
             }
 
             escort.GivingWay = GiveWay(force, escort, ref aim, ref knots);

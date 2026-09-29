@@ -19,14 +19,48 @@ namespace NOrders
     // fresh approach to the deck as it lies now. Other aircraft go round the
     // game's own way. Ownership.Acts on the ship, as for any fix to the
     // game's behaviour.
+    //
+    // Ahead of that, a flight of ours coming home to a ship that is turning
+    // marshals overhead (NavalPilotState) until the deck has held its heading
+    // for a while: the game's pattern entry sits three turning circles astern
+    // of the deck, so a turning ship swings it sideways faster than the
+    // aircraft can follow, and one was seen chasing it round for minutes. One
+    // still joining the pattern when the ship starts to turn is taken back
+    // into the marshal the same way.
     internal static class DeckWaveOff
     {
         private static readonly FieldInfo Mode = AccessTools.Field(typeof(AIPilotLandingState), "landingMode");
         private static readonly FieldInfo Base = AccessTools.Field(typeof(AIPilotLandingState), "airbase");
         private static readonly MethodInfo Switch = AccessTools.Method(typeof(AIPilotLandingState), "SwitchMode");
 
-        private const int TurningToFinal = 1, StabilizedApproach = 2, Aborting = 5;
+        private const int JoiningPattern = 0, TurningToFinal = 1, StabilizedApproach = 2, Aborting = 5;
         private const float DeckSwing = 15f;
+
+        // A deck is steady once its heading has stayed within a few degrees
+        // for SteadyFor seconds; a swing past SteadyBand starts the clock again.
+        internal const float SteadyFor = 15f;
+        private const float SteadyBand = 5f;
+
+        private sealed class Deck { internal float Heading, Since, Sampled; }
+        private static readonly Dictionary<Ship, Deck> decks = new Dictionary<Ship, Deck>();
+
+        // Seconds the ship has held its present heading. Sampled on demand and
+        // from the sweep; a ship not looked at for a while starts afresh.
+        internal static float SteadyTime(Ship ship)
+        {
+            if (ship == null) return 0f;
+            float now = Time.timeSinceLevelLoad, heading = ship.transform.eulerAngles.y;
+            if (!decks.TryGetValue(ship, out Deck deck) || now - deck.Sampled > 5f || now < deck.Sampled)
+            {
+                deck = new Deck { Heading = heading, Since = now };
+                decks[ship] = deck;
+            }
+            deck.Sampled = now;
+            if (Mathf.Abs(Mathf.DeltaAngle(deck.Heading, heading)) > SteadyBand) { deck.Heading = heading; deck.Since = now; }
+            return now - deck.Since;
+        }
+
+        internal static bool Steady(Ship ship) => SteadyTime(ship) >= SteadyFor;
 
         private static readonly Dictionary<Aircraft, float> headingAtTurnIn = new Dictionary<Aircraft, float>();
         private static readonly Dictionary<Flight, float> wavedOff = new Dictionary<Flight, float>();
@@ -37,6 +71,13 @@ namespace NOrders
             if (Mode == null || Base == null || Switch == null || !MissionManager.IsRunning) return;
             if (Time.timeSinceLevelLoad < nextSweep) return;
             nextSweep = Time.timeSinceLevelLoad + 0.25f;
+
+            // Keep the clock running on every deck one of ours is coming home to.
+            foreach (Flight flight in FlightOrders.All())
+                if (flight.Mode == FlightMode.ReturnToBase && flight.Parent != null && !flight.Parent.disabled) SteadyTime(flight.Parent);
+            var stale = new List<Ship>();
+            foreach (Ship ship in decks.Keys) if (ship == null || ship.disabled) stale.Add(ship);
+            foreach (Ship ship in stale) decks.Remove(ship);
 
             var seen = new HashSet<Aircraft>();
             foreach (Unit unit in UnitRegistry.allUnits)
@@ -49,6 +90,17 @@ namespace NOrders
                 if (ship == null || ship.disabled || !Ownership.Acts(ship)) continue;
 
                 int mode = Convert.ToInt32(Mode.GetValue(landing));
+                // Still joining when the ship turns: ours goes back to the marshal.
+                if (mode == JoiningPattern && SteadyTime(ship) < 1f)
+                {
+                    Flight ours = FlightOrders.Of(aircraft);
+                    if (ours != null && ours.Mode == FlightMode.ReturnToBase && ours.Adopted && NavalPilotState.CanBeFlown(aircraft))
+                    {
+                        ours.Adopted = false;       // Tick reinstalls our state, which marshals
+                        Host.LogInfo("[deck] " + ours.Name + " · " + ShipNames.Of(ship) + " turning · back to the marshal");
+                    }
+                    continue;
+                }
                 if ((mode != TurningToFinal && mode != StabilizedApproach) || aircraft.radarAlt < 3f) continue;
                 seen.Add(aircraft);
                 float heading = ship.transform.eulerAngles.y;

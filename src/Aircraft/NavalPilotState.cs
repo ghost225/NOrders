@@ -226,7 +226,7 @@ namespace NOrders
                     else FlyRunIn(pilot);
                     break;
                 case FlightMode.Engage: HandBackToCombat(pilot); break;
-                case FlightMode.ReturnToBase: HandBackToLanding(pilot); break;
+                case FlightMode.ReturnToBase: FlyHome(pilot); break;
                 // A mode with no arm here writes no control inputs at all, and
                 // the aircraft simply falls out of the sky -- which is how both
                 // Strike and Cargo were first found. Holding is always wrong
@@ -833,6 +833,30 @@ namespace NOrders
             Tracing.Flight("[flight] " + flight.Name + " · handing to the combat pilot · " + flight.Describe());
             pilot.SwitchStateNew(combat);
             NativePilot.Wake(combat, aircraft);
+        }
+
+        // Home to a ship that is turning: hold overhead until the deck has
+        // settled, then hand over to the game's approach. Jets only -- a
+        // helicopter comes straight down onto the spot whatever the heading --
+        // and never on the last of the fuel.
+        private bool marshalling;
+        private void FlyHome(Pilot pilot)
+        {
+            Ship deck = flight.Parent;
+            if (deck != null && !deck.disabled && Ownership.Acts(deck) && aircraft.autopilot is AutopilotPlane &&
+                aircraft.GetFuelLevel() > 0.08f && !DeckWaveOff.Steady(deck))
+            {
+                if (!marshalling)
+                {
+                    marshalling = true;
+                    Host.LogInfo("[flight] " + flight.Name + " · marshalling over " + ShipNames.Of(deck) + " until the deck steadies");
+                    Host.Say(flight.Name + " · marshalling, " + ShipNames.Of(deck) + " turning");
+                }
+                FlyOrbit(deck.GlobalPosition(), 3000f);
+                return;
+            }
+            marshalling = false;
+            HandBackToLanding(pilot);
         }
 
         private void HandBackToLanding(Pilot pilot)
