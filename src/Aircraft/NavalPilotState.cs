@@ -144,7 +144,7 @@ namespace NOrders
             if (aircraft.autopilot is AutopilotPlane && flight.Mode != FlightMode.Strike && flight.Mode != FlightMode.Formation)
             {
                 float corner = parameters != null ? parameters.cornerSpeed : 0f;
-                bool slow = corner > 0f && aircraft.speed < corner * 1.15f;
+                bool slow = corner > 0f && aircraft.speed < corner * 1.25f;
                 bool low = aircraft.radarAlt < 150f && flight.Mode != FlightMode.Egress;
                 if ((slow || low) && !flight.EvadingInfrared)
                 {
@@ -288,7 +288,7 @@ namespace NOrders
             // close. Well outside the area, just go there.
             if (distance > radius * 1.5f)
             {
-                Steer(centre + outward * radius);
+                Steer(centre + outward * radius, default, SafeBank());
                 return;
             }
 
@@ -300,7 +300,19 @@ namespace NOrders
             // Never look further ahead than the circle itself, or a small area
             // gets a look-ahead that points clean outside it.
             float lookAhead = Mathf.Min(LookAhead, radius * 1.5f);
-            Steer(aircraft.GlobalPosition() + heading * lookAhead);
+            Steer(aircraft.GlobalPosition() + heading * lookAhead, default, SafeBank());
+        }
+
+        // How hard to bank with the speed in hand. A fighter well above its
+        // corner speed can hold the seventy degrees the transit code allows; one
+        // near it is levelled off, or it holds the turn until it stalls -- seven
+        // fighters went into the sea from a routine orbit in one run.
+        private float SafeBank()
+        {
+            float corner = parameters != null ? parameters.cornerSpeed : 0f;
+            if (corner <= 0f || !(aircraft.autopilot is AutopilotPlane)) return 60f;
+            float margin = (aircraft.speed - corner) / corner;          // 0 at corner speed
+            return Mathf.Lerp(25f, 70f, Mathf.Clamp01(margin / 0.6f));
         }
 
         private static Vector3 Flat(Vector3 value)
