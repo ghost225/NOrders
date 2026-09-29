@@ -518,7 +518,16 @@ namespace NOrders
 
             if (!(aircraft.autopilot is AutopilotPlane))
             {
-                Steer(slot, velocity);
+                // Down the lead's track from the slot, not at the slot. Aimed
+                // at a point a few hundred metres off, a rotary wingman slowed
+                // to a crawl, where its climb is held to a few metres; a loaded
+                // tiltwing slowed off its wing lift as well. Tarantula wingmen
+                // could not follow their lead up, hung low behind it, and one
+                // went into the sea. Ahead of its slot, the aim point comes
+                // back towards the slot so it slows rather than runs on.
+                float leadIn = Mathf.Clamp(distance * 0.5f + 400f, 400f, RotaryLead);
+                float ahead = Mathf.Clamp(leadIn + Mathf.Min(along, 0f), 0f, leadIn);
+                Steer(slot + forward * ahead, velocity);
                 return;
             }
 
