@@ -44,5 +44,11 @@ namespace NOrders
         // allocation. (Kill credit has its own switch above.) Shipped without
         // this, High Command's recoveries paid the player sortie bonuses.
         public static bool PlayerDirected = false;
+
+        // A waypoint to fly through on the way home, or null to go straight
+        // there: the host mod knows where the enemy's missiles reach and can
+        // route a returning flight round them. Every return goes through it,
+        // including the ones this tree orders itself for fuel or ammunition.
+        public static Func<Flight, GlobalPosition?> DoglegHome = _ => null;
     }
 }

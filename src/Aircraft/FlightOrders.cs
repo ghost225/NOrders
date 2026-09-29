@@ -65,6 +65,7 @@ namespace NOrders
         public bool ThreatIsInfrared;       // flares matter, and it must be let in much closer
         public float ThreatRange = float.PositiveInfinity;
         public Missile ThreatMissile;       // the nearest shot at us
+        public GlobalPosition? HomingVia;   // on the way home by a dogleg; the landing follows once it is reached
         public string LastThreat;           // the last shot at us, described; for the loss report
         public float LastThreatAt;
         public float LastBurstAt;           // IR defence: when the last string of flares ended
@@ -506,6 +507,18 @@ namespace NOrders
             foreach (Flight flight in flights)
             {
                 flight.RefreshStores();
+                // A dogleg home reached (the route ends in an orbit at its last
+                // leg), or the flight retasked meanwhile: the landing, or nothing.
+                if (flight.HomingVia.HasValue)
+                {
+                    if (flight.Mode != FlightMode.Route && flight.Mode != FlightMode.Orbit) flight.HomingVia = null;
+                    else if (flight.Mode == FlightMode.Orbit || (flight.Aircraft != null &&
+                             FastMath.InRange(flight.Aircraft.GlobalPosition(), flight.HomingVia.Value, 2500f)))
+                    {
+                        flight.HomingVia = null;
+                        flight.Mode = FlightMode.ReturnToBase;
+                    }
+                }
                 // The burner for the native pilot too: it sets full throttle in
                 // a fight and never touches the axis that lights the afterburner
                 // on airframes with parasitic thrust loss, so a mod fighter
@@ -1402,6 +1415,20 @@ namespace NOrders
         public static void ReturnToBase(Flight flight)
         {
             if (flight == null) return;
+            // Round the missiles first, if the host mod knows a way.
+            if (flight.HomingVia == null && flight.Aircraft != null && !flight.Aircraft.disabled)
+            {
+                GlobalPosition? via = null;
+                try { via = Host.DoglegHome(flight); } catch (System.Exception ex) { Host.LogWarning("[flight] dogleg: " + ex.Message); }
+                if (via.HasValue)
+                {
+                    flight.HomingVia = via;
+                    SetRoute(flight, via.Value, false);
+                    Host.LogInfo("[flight] " + flight.Name + " · home round the missiles via a dogleg");
+                    return;
+                }
+            }
+            flight.HomingVia = null;
             flight.Mode = FlightMode.ReturnToBase;
         }
 
