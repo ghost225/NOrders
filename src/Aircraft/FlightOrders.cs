@@ -506,6 +506,15 @@ namespace NOrders
             foreach (Flight flight in flights)
             {
                 flight.RefreshStores();
+                // The burner for the native pilot too: it sets full throttle in
+                // a fight and never touches the axis that lights the afterburner
+                // on airframes with parasitic thrust loss, so a mod fighter
+                // fought at a fraction of its thrust and died slow.
+                if (flight.Interrupted && flight.Aircraft.autopilot is AutopilotPlane && !Host.IsFlownByPlayer(flight))
+                {
+                    ControlInputs inputs = flight.Aircraft.GetInputs();
+                    if (inputs != null) inputs.customAxis1 = inputs.throttle >= 0.98f ? 1f : 0f;
+                }
             }
 
             for (int i = pending.Count - 1; i >= 0; i--)
