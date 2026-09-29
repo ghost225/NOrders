@@ -244,7 +244,7 @@ namespace NOrders
 
         // Furthest any wingman is from its slot, straight-line: what the lead
         // waits on while the wing forms up.
-        private static float WorstOffSlot(Flight lead)
+        internal static float WorstOffSlot(Flight lead)
         {
             float worst = 0f;
             foreach (Flight member in Members(lead.Wing))

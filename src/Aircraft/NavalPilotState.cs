@@ -527,7 +527,11 @@ namespace NOrders
                 // back towards the slot so it slows rather than runs on.
                 float leadIn = Mathf.Clamp(distance * 0.5f + 400f, 400f, RotaryLead);
                 float ahead = Mathf.Clamp(leadIn + Mathf.Min(along, 0f), 0f, leadIn);
-                Steer(slot + forward * ahead, velocity);
+                // Nose along the lead's heading. Handed the lead's velocity,
+                // the autopilot turns the nose by the aircraft's motion relative
+                // to it -- nothing, for a wingman keeping pace -- so it never
+                // turned, and tilted its way to the slot sideways or backwards.
+                Steer(slot + forward * ahead, velocity, 70f, forward);
                 return;
             }
 
@@ -570,7 +574,7 @@ namespace NOrders
             return false;
         }
 
-        private void Steer(GlobalPosition target, Vector3 velocity = default, float bank = 70f)
+        private void Steer(GlobalPosition target, Vector3 velocity = default, float bank = 70f, Vector3 nose = default)
         {
             Autopilot autopilot = aircraft.autopilot;
             if (autopilot == null) return;
@@ -633,16 +637,27 @@ namespace NOrders
             // instead of flying. Aim at a point a bounded distance along the
             // bearing instead -- it moves with the aircraft, so the course is
             // unchanged, but the error the PID sees stays in its working range.
+            //
+            // The same distance is its speed: the tilt PID leans in proportion
+            // to the offset, so a lead aimed 1.5 km out flies as fast as its
+            // wingmen can, and one that fell behind never closed. A rotary lead
+            // with a wing strung out aims shorter, and slows, until they are in.
             GlobalPosition here = aircraft.GlobalPosition();
             Vector3 bearing = target - here;
             bearing.y = 0f;
             float span = bearing.magnitude;
-            GlobalPosition aim = span > RotaryLead
-                ? here + bearing / span * RotaryLead
+            float reach = RotaryLead;
+            if (Wings.HasFollowers(flight))
+            {
+                float behind = Mathf.Max(Wings.Straggle(flight), Wings.WorstOffSlot(flight) * 0.7f);
+                if (behind > 300f) reach = Mathf.Lerp(RotaryLead, RotaryLead * 0.25f, Mathf.Clamp01((behind - 300f) / 1500f));
+            }
+            GlobalPosition aim = span > reach
+                ? here + bearing / span * reach
                 : target;
 
             destination = aim;
-            autopilot.AutoAim(aim, commanded, Vector3.zero, velocity, followTerrain: true);
+            autopilot.AutoAim(aim, commanded, nose, velocity, followTerrain: true);
         }
 
         // Only these autopilots actually implement an AutoAim; anything else
