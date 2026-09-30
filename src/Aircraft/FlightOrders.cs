@@ -808,7 +808,11 @@ namespace NOrders
 
                 // A fixed-wing strike is set up by us first -- the run-in, in
                 // our own state -- and handed to the combat pilot from there.
-                if (flight.Mode == FlightMode.Strike && IsAirTarget(flight.Target)) flight.RunInDone = true;
+                // An air target goes straight to the combat pilot, unless it is
+                // one for a radar missile: that intercept is flown by us first.
+                if (flight.Mode == FlightMode.Strike && IsAirTarget(flight.Target) &&
+                    !NavalPilotState.Bvr(flight, NamedStation(flight.Aircraft, flight.PreferredWeapon) ?? BestStationFor(flight.Aircraft, flight.Target)))
+                    flight.RunInDone = true;
                 if (flight.Mode == FlightMode.Strike && !flight.RunInDone && !IsRotary(pilot) &&
                     NavalPilotState.CanBeFlown(flight.Aircraft))
                 {

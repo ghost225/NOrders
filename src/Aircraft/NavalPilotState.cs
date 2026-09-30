@@ -825,7 +825,12 @@ namespace NOrders
             FactionHQ hq = aircraft.NetworkHQ;
             WeaponStation station = FlightOrders.NamedStation(aircraft, flight.PreferredWeapon) ??
                 (target != null ? FlightOrders.BestStationFor(aircraft, target) : null);
-            if (FlightOrders.IsAirTarget(target)) { CompleteRunIn(pilot, "air target"); return; }
+            if (FlightOrders.IsAirTarget(target))
+            {
+                if (Bvr(flight, station)) FlyBvr(pilot, target, station);
+                else CompleteRunIn(pilot, "air target");
+                return;
+            }
             // A missile we launch ourselves: no dive, no pressing in.
             WeaponInfo weapon = station?.WeaponInfo;
             if (weapon != null && weapon.missile && !weapon.laserGuided && !weapon.bomb && station.Ammo > 0 &&
@@ -896,6 +901,108 @@ namespace NOrders
         // 4 km to 900 m and lost its track over the horizon. Anything it
         // cannot launch at within a minute of reaching range goes to the
         // native pilot as before.
+        // An air target with a radar-guided missile: our own run-in, not the
+        // combat pilot's.
+        internal static bool Bvr(Flight flight, WeaponStation station)
+        {
+            if (flight?.Aircraft == null || !(flight.Aircraft.autopilot is AutopilotPlane)) return false;
+            if (!(flight.Target is Aircraft) || station?.WeaponInfo == null || !station.WeaponInfo.missile || station.Ammo <= 0) return false;
+            string seeker = ShotDisciplinePatch.Guidance(station.WeaponInfo);
+            return seeker == "ARH" || seeker == "SARH";
+        }
+
+        // Beyond visual range: climb above the target while closing -- thinner
+        // air and the height to fall through reach further, so it launches
+        // sooner -- and launch at that range. Only with the way in clear of
+        // known air defence and enemy forces, and nothing already shot at us,
+        // press in to the no-escape range first. Both ranges are the game's
+        // own (Missile.CalcRange, what the HUD shows a pilot), worked out
+        // from our speed and height and the target's as they are now. After
+        // the salvo the combat pilot has it, supporting the shot as it would.
+        private const float BvrLoft = 1500f, BvrCeiling = 12000f, BvrMargin = 0.95f;
+        private string bvrNote;
+        private float bvrRangeAt = -1f, bvrMax, bvrNoEscape;
+
+        private void FlyBvr(Pilot pilot, Unit target, WeaponStation station)
+        {
+            FactionHQ hq = aircraft.NetworkHQ;
+            if (hq == null || Host.Dead(target) || !hq.TryGetKnownPosition(target, out GlobalPosition known)) { CompleteRunIn(pilot, "no track on the air target"); return; }
+            WeaponInfo info = station.WeaponInfo;
+            TargetRequirements needs = info.targetRequirements;
+            GlobalPosition here = aircraft.GlobalPosition();
+            float ground = here.y - aircraft.radarAlt;
+            float range = FastMath.Distance(here, known);
+            if (Time.timeSinceLevelLoad - flight.RunInStarted > 240f) { CompleteRunIn(pilot, "intercept timed out"); return; }
+            if (range < needs.minRange * 1.1f) { CompleteRunIn(pilot, "inside minimum range"); return; }
+
+            // Above it, and climbing while we close: never lower than now.
+            float loft = Mathf.Clamp(Mathf.Max(known.y + BvrLoft, here.y), ground + MinimumClearance, ground + BvrCeiling);
+            if (Time.timeSinceLevelLoad - bvrRangeAt >= 1f || bvrRangeAt < 0f)
+            {
+                bvrRangeAt = Time.timeSinceLevelLoad;
+                bvrMax = needs.maxRange;
+                bvrNoEscape = needs.maxRange * 0.5f;
+                Missile prefab = info.weaponPrefab != null ? info.weaponPrefab.GetComponent<Missile>() : null;
+                if (prefab != null)
+                {
+                    try { bvrMax = prefab.CalcRange(aircraft.speed, here.y, known.y, range, target.speed, out bvrNoEscape); }
+                    catch { bvrMax = needs.maxRange; bvrNoEscape = needs.maxRange * 0.5f; }
+                }
+            }
+            float extended = Mathf.Max(bvrMax * BvrMargin, needs.minRange * 1.5f);
+            float noEscape = Mathf.Clamp(bvrNoEscape, needs.minRange * 1.5f, extended);
+
+            // Pressing in to the no-escape range: only if the way there is
+            // clear and nothing is already coming at us.
+            Vector3 toTarget = known - here;
+            GlobalPosition pressTo = here + toTarget * Mathf.Clamp01((range - noEscape) / Mathf.Max(range, 1f));
+            string why = null;
+            bool clear = flight.Threat != FlightThreat.Missile && !AirDefence.Threatens(aircraft, here, pressTo, out why);
+            float launchAt = clear ? noEscape : extended;
+            string note = clear ? "pressing to " + (noEscape / 1000f).ToString("0") + " km, the way in is clear"
+                : "launching at " + (extended / 1000f).ToString("0") + " km · " + (flight.Threat == FlightThreat.Missile ? "under fire" : why);
+            if (note != bvrNote) { bvrNote = note; Tracing.Flight("[flight] " + flight.Name + " · intercept · " + note); }
+
+            float ordered = flight.Altitude;
+            flight.Altitude = loft - ground;
+            try
+            {
+                if (range > launchAt) { Steer(known); return; }
+
+                float corner = parameters != null ? parameters.cornerSpeed : 0f;
+                if (corner > 0f && aircraft.speed < corner * 1.15f)
+                {
+                    controlInputs.throttle = 1f; Reheat();
+                    Steer(known);
+                    return;
+                }
+                Steer(known);
+                float off = Vector3.Angle(aircraft.transform.forward, toTarget);
+                float cone = needs.minAlignment > 0f ? needs.minAlignment : 30f;
+                if (off > cone * 0.9f || Time.timeSinceLevelLoad - flight.LastLaunchAt < 2.5f) return;
+                if (aircraft.speed < needs.minOwnerSpeed) return;
+
+                if (flight.SalvoLeft <= 0) flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
+                aircraft.weaponManager.currentWeaponStation = station;
+                List<Unit> targets = aircraft.weaponManager.GetTargetList();
+                targets.Clear();
+                int found = CombatAI.LookForMissileTargets(aircraft, target, station, targets);
+                aircraft.weaponManager.TargetListChanged();
+                if (found <= 0) return;
+                int before = station.Ammo;
+                pilot.Fire();
+                flight.LastLaunchAt = Time.timeSinceLevelLoad;
+                if (station.Ammo < before)
+                {
+                    flight.SalvoLeft--;
+                    Tracing.Flight("[flight] " + flight.Name + " · launched " + info.weaponName + " at " + (range / 1000f).ToString("0.0") +
+                        " km from " + aircraft.radarAlt.ToString("0") + " m · " + Mathf.Max(flight.SalvoLeft, 0) + " left in the salvo");
+                }
+                if (station.Ammo <= 0 || flight.SalvoLeft <= 0) CompleteRunIn(pilot, "launched");
+            }
+            finally { flight.Altitude = ordered; }
+        }
+
         private void FlyStandoffLaunch(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station)
         {
             WeaponInfo info = station.WeaponInfo;
