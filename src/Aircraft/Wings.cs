@@ -375,8 +375,66 @@ namespace NOrders
             return true;
         }
 
+        // Each lead's recent track, for rotary wingmen to fly along: where it
+        // went, not a slot hung off wherever its nose points this instant.
+        // A point every 25 m of travel, about the last eight kilometres.
+        private sealed class Crumb { internal GlobalPosition At; internal Vector3 Forward; }
+        private static readonly Dictionary<Flight, List<Crumb>> trails = new Dictionary<Flight, List<Crumb>>();
+
+        private static void RecordTrail(Flight lead)
+        {
+            if (lead?.Aircraft == null || lead.Aircraft.disabled) return;
+            if (!trails.TryGetValue(lead, out List<Crumb> trail)) trails[lead] = trail = new List<Crumb>();
+            GlobalPosition here = lead.Aircraft.GlobalPosition();
+            if (trail.Count > 0)
+            {
+                Vector3 moved = here - trail[trail.Count - 1].At;
+                moved.y = 0f;
+                if (moved.sqrMagnitude < 25f * 25f) return;
+                trail.Add(new Crumb { At = here, Forward = moved.normalized });
+            }
+            else
+            {
+                Vector3 nose = lead.Aircraft.transform.forward;
+                nose.y = 0f;
+                trail.Add(new Crumb { At = here, Forward = nose.sqrMagnitude > 0.01f ? nose.normalized : Vector3.forward });
+            }
+            if (trail.Count > 320) trail.RemoveRange(0, trail.Count - 320);
+        }
+
+        // The point on the lead's track `behind` metres back along it, and the
+        // way the lead was travelling there. False with too little track.
+        internal static bool TrailPoint(Flight lead, float behind, out GlobalPosition point, out Vector3 forward)
+        {
+            point = default; forward = Vector3.forward;
+            if (lead?.Aircraft == null || !trails.TryGetValue(lead, out List<Crumb> trail) || trail.Count < 2) return false;
+            GlobalPosition newer = lead.Aircraft.GlobalPosition();
+            Vector3 newerForward = trail[trail.Count - 1].Forward;
+            float left = behind;
+            for (int i = trail.Count - 1; i >= 0; i--)
+            {
+                Vector3 segment = newer - trail[i].At;
+                segment.y = 0f;
+                float length = segment.magnitude;
+                if (length >= left && length > 0.01f)
+                {
+                    point = newer - segment / length * left;
+                    forward = newerForward;
+                    return true;
+                }
+                left -= length;
+                newer = trail[i].At;
+                newerForward = trail[i].Forward;
+            }
+            return false;
+        }
+
         internal static void Tick()
         {
+            var alive = new HashSet<Flight>();
+            foreach (Record record in wings.Values) if (Alive(record.Lead)) { alive.Add(record.Lead); RecordTrail(record.Lead); }
+            foreach (Flight gone in new List<Flight>(trails.Keys)) if (!alive.Contains(gone)) trails.Remove(gone);
+
             foreach (Record record in new List<Record>(wings.Values))
             {
                 List<Flight> members = Members(record.Name);

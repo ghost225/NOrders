@@ -518,20 +518,7 @@ namespace NOrders
 
             if (!(aircraft.autopilot is AutopilotPlane))
             {
-                // Down the lead's track from the slot, not at the slot. Aimed
-                // at a point a few hundred metres off, a rotary wingman slowed
-                // to a crawl, where its climb is held to a few metres; a loaded
-                // tiltwing slowed off its wing lift as well. Tarantula wingmen
-                // could not follow their lead up, hung low behind it, and one
-                // went into the sea. Ahead of its slot, the aim point comes
-                // back towards the slot so it slows rather than runs on.
-                float leadIn = Mathf.Clamp(distance * 0.5f + 400f, 400f, RotaryLead);
-                float ahead = Mathf.Clamp(leadIn + Mathf.Min(along, 0f), 0f, leadIn);
-                // Nose along the lead's heading. Handed the lead's velocity,
-                // the autopilot turns the nose by the aircraft's motion relative
-                // to it -- nothing, for a wingman keeping pace -- so it never
-                // turned, and tilted its way to the slot sideways or backwards.
-                Steer(slot + forward * ahead, velocity, 70f, forward);
+                FlyRotaryFormation(slot, forward, velocity, anchorFlight);
                 return;
             }
 
@@ -574,7 +561,91 @@ namespace NOrders
             return false;
         }
 
-        private void Steer(GlobalPosition target, Vector3 velocity = default, float bank = 70f, Vector3 nose = default)
+        internal enum Rotary { Plain, Compound, Tiltwing }
+        private static readonly System.Reflection.FieldInfo CompoundHelo = HarmonyLib.AccessTools.Field(typeof(AutopilotHelo), "compoundHelo");
+
+        internal static Rotary RotaryKind(Aircraft aircraft)
+        {
+            if (aircraft?.autopilot is AutopilotTiltwing) return Rotary.Tiltwing;
+            if (aircraft?.autopilot is AutopilotHelo helo && CompoundHelo != null && (bool)CompoundHelo.GetValue(helo)) return Rotary.Compound;
+            return Rotary.Plain;
+        }
+
+        // A rotary wingman: follow the leader.
+        //
+        // A slot hung off the lead's nose swings round with every turn it
+        // makes, and one circling a station area swung it round a circle a
+        // wingman could only chase. So along the lead's own track instead: the
+        // point it passed a slot's distance back, offset to the slot's side,
+        // with the way it was going there. Slow or hovering, the slot beside
+        // it as before.
+        //
+        // And the speed. A tiltwing's autopilot asks for about 1.7·√d m/s to
+        // a destination d metres off, and only blends into forward flight past
+        // 500 m; a compound helicopter's pusher settles near d/20 m/s. Aimed
+        // at a point a few hundred metres off, a Tarantula wingman stayed in
+        // hover mode while its lead converted and left it, and an Ibis idled
+        // its pusher. So each is aimed along the track at the distance that
+        // asks for the speed it needs: the lead's, and more while behind.
+        // A plain helicopter keeps the slot logic that works for the Chicane.
+        private void FlyRotaryFormation(GlobalPosition slot, Vector3 forward, Vector3 velocity, Flight anchorFlight)
+        {
+            Aircraft anchor = anchorFlight?.Aircraft;
+            GlobalPosition here = aircraft.GlobalPosition();
+            GlobalPosition anchorAt = anchor != null ? anchor.GlobalPosition() : slot;
+            Vector3 leadVelocity = anchor != null && anchor.rb != null ? anchor.rb.velocity : velocity;
+            leadVelocity.y = 0f;
+            float leadSpeed = leadVelocity.magnitude;
+
+            Vector3 lateral = Vector3.Cross(Vector3.up, forward);
+            Vector3 fromAnchor = slot - anchorAt;
+            fromAnchor.y = 0f;
+            float right = Vector3.Dot(fromAnchor, lateral), ahead = Vector3.Dot(fromAnchor, forward);
+
+            GlobalPosition target = slot;
+            Vector3 dir = forward;
+            if (leadSpeed > 12f && Wings.TrailPoint(anchorFlight, Mathf.Max(-ahead, 60f), out GlobalPosition crumb, out Vector3 crumbForward))
+            {
+                dir = crumbForward;
+                target = crumb + Vector3.Cross(Vector3.up, crumbForward) * right;
+            }
+            Vector3 gap = target - here;
+            gap.y = 0f;
+            float distance = gap.magnitude;
+            float along = Vector3.Dot(gap, dir);            // positive: behind its point
+
+            Rotary kind = RotaryKind(aircraft);
+            if (kind == Rotary.Plain)
+            {
+                float leadIn = Mathf.Clamp(distance * 0.5f + 400f, 400f, RotaryLead);
+                float aheadBy = Mathf.Clamp(leadIn + Mathf.Min(along, 0f), 0f, leadIn);
+                Steer(target + dir * aheadBy, velocity, 70f, dir);
+                return;
+            }
+
+            // The speed wanted: the lead's, more while behind, less while
+            // ahead; well adrift, a good deal more.
+            float want = leadSpeed + Mathf.Clamp(along * 0.04f, -20f, 30f);
+            if (distance > 1500f && along > 0f) want = Mathf.Max(want, leadSpeed + 30f);
+            want = Mathf.Max(want, 0f);
+            float reach = kind == Rotary.Tiltwing ? (want / 1.7f) * (want / 1.7f) : want * 20f;
+            // A tiltwing also scales its height hold down to nothing close in
+            // and slow -- how a wingman aimed near sank towards the ground --
+            // so never nearer than where that hold is whole.
+            reach = Mathf.Clamp(reach, kind == Rotary.Tiltwing ? 400f : 150f, 8000f);
+
+            // Towards the track a little ahead of its point, so it closes onto
+            // the line rather than chasing the point itself.
+            GlobalPosition toward = target + dir * Mathf.Clamp(distance * 0.5f, 100f, 800f);
+            Vector3 heading = toward - here;
+            heading.y = 0f;
+            heading = heading.sqrMagnitude > 1f ? heading.normalized : dir;
+            // Nose where it is going: the relative-velocity yaw this autopilot
+            // uses is nothing for a wingman keeping pace.
+            Steer(here + heading * reach, Vector3.zero, 70f, heading, reach);
+        }
+
+        private void Steer(GlobalPosition target, Vector3 velocity = default, float bank = 70f, Vector3 nose = default, float reachOverride = 0f)
         {
             Autopilot autopilot = aircraft.autopilot;
             if (autopilot == null) return;
@@ -646,11 +717,16 @@ namespace NOrders
             Vector3 bearing = target - here;
             bearing.y = 0f;
             float span = bearing.magnitude;
-            float reach = RotaryLead;
-            if (Wings.HasFollowers(flight))
+            //
+            // Only a plain helicopter slows this way, and only by so much: a
+            // tiltwing aimed short falls out of forward flight and off its wing
+            // lift -- a Tarantula lead sank from 580 m to 18 m waiting -- and a
+            // compound's pusher idles.
+            float reach = reachOverride > 0f ? reachOverride : RotaryLead;
+            if (reachOverride <= 0f && Wings.HasFollowers(flight) && RotaryKind(aircraft) == Rotary.Plain)
             {
                 float behind = Mathf.Max(Wings.Straggle(flight), Wings.WorstOffSlot(flight) * 0.7f);
-                if (behind > 300f) reach = Mathf.Lerp(RotaryLead, RotaryLead * 0.25f, Mathf.Clamp01((behind - 300f) / 1500f));
+                if (behind > 300f) reach = Mathf.Lerp(RotaryLead, RotaryLead * 0.6f, Mathf.Clamp01((behind - 300f) / 1500f));
             }
             GlobalPosition aim = span > reach
                 ? here + bearing / span * reach
