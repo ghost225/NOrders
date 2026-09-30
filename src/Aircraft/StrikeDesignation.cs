@@ -64,7 +64,7 @@ namespace NOrders
                 return;
             }
 
-            WeaponStation best = null, gun = null;
+            WeaponStation best = null;
             float bestScore = 0f;
             bool anyAmmo = false;
             foreach (WeaponStation station in aircraft.weaponStations)
@@ -72,7 +72,9 @@ namespace NOrders
                 if (station == null || station.WeaponInfo == null) continue;
                 if (station.Ammo <= 0) continue;
                 anyAmmo = true;
-                if (station.WeaponInfo.gun && gun == null) gun = station;
+                // A gun is used on a strike only when it was the weapon chosen
+                // (handled above, by name); never picked for itself.
+                if (station.WeaponInfo.gun) continue;
                 float score = CombatAI.AnalyzeTarget(station, aircraft, track).opportunity;
                 // A store that cannot be dropped on the present track loses a
                 // tie, but is not excluded: the aircraft may well acquire the
@@ -83,12 +85,6 @@ namespace NOrders
                 best = station;
             }
 
-            // Nothing scores against it, but a gun run is still a gun run.
-            if (best == null && gun != null)
-            {
-                best = gun;
-                bestScore = 0.01f;
-            }
 
             if (best == null)
             {

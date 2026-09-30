@@ -759,7 +759,7 @@ namespace NOrders
                         // helicopter every egress emptied eight racks at it.
                         bool rearmed = !Host.Dead(flight.Target) &&
                             !(flight.Target is Aircraft) &&
-                            BestStationFor(flight.Aircraft, flight.Target) != null &&
+                            (NamedStation(flight.Aircraft, flight.PreferredWeapon) ?? BestStationFor(flight.Aircraft, flight.Target)) != null &&
                             Tuning.ReattackAfterEgress;
                         if (rearmed)
                         {
@@ -1556,7 +1556,12 @@ namespace NOrders
             return true;
         }
 
-        internal static WeaponStation BestStationFor(Aircraft aircraft, Unit target)
+        // The best store aboard for the target. Guns only when allowed: a
+        // flight is not sent at a target with nothing but its gun unless the
+        // gun was chosen for it -- a wingman with no air-to-air missiles went
+        // after an aircraft on the strength of its cannon. A gun picked by
+        // name (NamedStation) is always honoured; weapons free may use one.
+        internal static WeaponStation BestStationFor(Aircraft aircraft, Unit target, bool allowGun = false)
         {
             if (aircraft == null || target == null || aircraft.weaponStations == null) return null;
             WeaponStation best = null, gun = null;
@@ -1564,7 +1569,11 @@ namespace NOrders
             foreach (WeaponStation station in aircraft.weaponStations)
             {
                 if (station == null || station.WeaponInfo == null || station.Ammo <= 0) continue;
-                if (station.WeaponInfo.gun && gun == null) gun = station;
+                if (station.WeaponInfo.gun)
+                {
+                    if (allowGun && gun == null) gun = station;
+                    continue;
+                }
 
                 float score = WeaponOrders.Opportunity(station.WeaponInfo, target);
                 if (score <= bestScore) continue;
@@ -1657,7 +1666,7 @@ namespace NOrders
                     Flight area = flight.Mode == FlightMode.Formation ? Wings.LeadOf(flight) : flight;
                     if (HasArea(area) &&
                         FastMath.Distance(unit.GlobalPosition(), AreaCentre(area)) > area.OrbitRadius) continue;
-                    WeaponStation station = BestStationFor(aircraft, unit);
+                    WeaponStation station = BestStationFor(aircraft, unit, allowGun: true);
                     if (station == null) continue;
                     float range = FastMath.Distance(aircraft.GlobalPosition(), unit.GlobalPosition());
                     if (range > station.WeaponInfo.targetRequirements.maxRange) continue;
