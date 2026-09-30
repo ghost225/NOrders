@@ -25,7 +25,11 @@ namespace NOrders
         private static void Postfix(Unit searcher, ref CombatAI.TargetSearchResults __result)
         {
             if (!Guard.Ok(Name)) return;
-            try { Designate(searcher, ref __result); }
+            try
+            {
+                Designate(searcher, ref __result);
+                if (searcher is Aircraft own) Restrict(own, ref __result);
+            }
             catch (Exception ex) { Guard.Failed(Name, ex); }
         }
 
@@ -40,7 +44,9 @@ namespace NOrders
             FactionHQ hq = aircraft.NetworkHQ;
             if (hq == null) return;
             TrackingInfo track = hq.GetTrackingData(target.persistentID);
-            if (track == null) return;
+            // No track on our target: no target at all, not the search's own
+            // pick -- a strike flight free-hunting ground targets nearby.
+            if (track == null) { __result = default(CombatAI.TargetSearchResults); return; }
             int inFlight = Reconcile(hq, target, track);
 
             // Score with CombatAI's own analyzer rather than a heuristic of our
@@ -118,6 +124,24 @@ namespace NOrders
             }
 
             __result = new CombatAI.TargetSearchResults(target, best, bestScore, !anyAmmo);
+        }
+
+        // Rules of engagement for the combat pilot flying one of ours on
+        // anything but a strike or a weapons-free order -- evading, or fighting
+        // back. Weapons hold: nothing. Weapons tight: only an aircraft that has
+        // fired at it in the last minute and a half; never the ground targets
+        // the search likes nearby, which is how a flight evading a shot went
+        // on to attack whatever was under it.
+        internal static void Restrict(Aircraft aircraft, ref CombatAI.TargetSearchResults result)
+        {
+            Flight flight = FlightOrders.Of(aircraft);
+            if (flight == null || flight.Mode == FlightMode.Strike || flight.Mode == FlightMode.Engage || flight.Roe == FlightRoe.Free) return;
+            Unit target = result.target;
+            if (target == null) return;
+            bool allowed = flight.Roe == FlightRoe.Tight && target is Aircraft &&
+                flight.Attackers.TryGetValue(target, out float at) && Time.timeSinceLevelLoad - at < 90f;
+            if (allowed) return;
+            result = default(CombatAI.TargetSearchResults);
         }
 
         // The game counts missiles fired at a target up when one takes it and

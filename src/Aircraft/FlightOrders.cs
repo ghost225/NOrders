@@ -59,6 +59,10 @@ namespace NOrders
         public readonly List<StrikeItem> StrikePlan = new List<StrikeItem>();
         public readonly List<StrikeItem> StrikeList = new List<StrikeItem>();
         internal float StrikeListCheck, PassFirstShot, NextFollowUp;
+        // Aircraft that have fired at this one, and when: what Weapons Tight
+        // may fight back against.
+        internal readonly Dictionary<Unit, float> Attackers = new Dictionary<Unit, float>();
+        internal float TrackLostSince = -1f;
         public int AmmoAtAttack = -1;       // total rounds when the run began
         public GlobalPosition CargoPoint;
         public bool Airdrop;
@@ -628,6 +632,22 @@ namespace NOrders
                     {
                         if (flight.JamTargets.Count < before) Host.Say(flight.Name + " · a jamming target is gone · " + flight.JamTargets.Count + " left");
                         flight.Target = flight.JamTargets[0];
+                    }
+                }
+
+                // The strike's target lost to the faction's picture for half a
+                // minute: end it (or go on down the list) rather than leave the
+                // combat pilot hunting whatever it finds.
+                if (flight.Mode == FlightMode.Strike && !Host.Dead(flight.Target) && flight.Aircraft.NetworkHQ != null)
+                {
+                    if (flight.Aircraft.NetworkHQ.TryGetKnownPosition(flight.Target, out _)) flight.TrackLostSince = -1f;
+                    else if (flight.TrackLostSince < 0f) flight.TrackLostSince = Time.timeSinceLevelLoad;
+                    else if (Time.timeSinceLevelLoad - flight.TrackLostSince > 30f)
+                    {
+                        flight.TrackLostSince = -1f;
+                        Host.LogInfo("[flight] " + flight.Name + " · lost the track on " + ShipNames.Of(flight.Target) + ", ending the strike");
+                        if (flight.StrikeList.Count > 0) { flight.StrikeList.RemoveAll(i => i.Target == flight.Target); StrikePlans.Next(flight, "track lost"); }
+                        else BreakOff(flight);
                     }
                 }
 
@@ -1590,6 +1610,7 @@ namespace NOrders
                     {
                         if (missile.targetID != aircraft.persistentID) continue;
                         threat = FlightThreat.Missile;
+                        if (missile.owner is Aircraft shooter && !shooter.disabled) flight.Attackers[shooter] = Time.timeSinceLevelLoad;
                         float shotRange = FastMath.Distance(aircraft.GlobalPosition(), missile.GlobalPosition());
                         if (shotRange < nearestShot) { nearestShot = shotRange; nearestMissile = missile; }
                         // A heat-seeker, by the game's own reading of the seeker
