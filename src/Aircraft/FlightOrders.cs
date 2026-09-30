@@ -488,7 +488,7 @@ namespace NOrders
         internal static int PendingInWing(string wing)
         {
             int count = 0;
-            foreach (Pending request in pending) if (request.Wing == wing) count++;
+            foreach (Pending request in Unseen()) if (request.Wing == wing) count++;
             return count;
         }
 
@@ -496,9 +496,38 @@ namespace NOrders
         internal static List<string> PendingNames(Airbase field)
         {
             var names = new List<string>();
-            foreach (Pending request in pending)
+            foreach (Pending request in Unseen())
                 if (request.Field == field && request.Definition != null) names.Add(request.Definition.unitName);
             return names;
+        }
+
+        // Requests with no aircraft to show for them yet. One is already on the
+        // deck when an aircraft of its type has come out of that field's
+        // hangar since it was asked for and is not yet taken on as a flight --
+        // the hook that claims a launch can miss, and the fallback match waits
+        // twenty seconds, so four Vortexes taxiing were also listed as four
+        // still in the hangar.
+        private static List<Pending> Unseen()
+        {
+            var result = new List<Pending>();
+            if (pending.Count == 0) return result;
+            var used = new HashSet<Aircraft>();
+            foreach (Pending request in pending)
+            {
+                bool seen = false;
+                if (request.Field != null && request.Definition != null)
+                    foreach (Unit unit in UnitRegistry.allUnits)
+                    {
+                        if (!(unit is Aircraft aircraft) || aircraft.disabled || used.Contains(aircraft)) continue;
+                        if (aircraft.definition != request.Definition || Of(aircraft) != null) continue;
+                        if (DeckTraffic.LaunchedAt(request.Field, aircraft) < request.RequestedAt - 1f) continue;
+                        used.Add(aircraft);
+                        seen = true;
+                        break;
+                    }
+                if (!seen) result.Add(request);
+            }
+            return result;
         }
 
         internal static readonly string[] RoleOrder = { "A/S", "A/A", "ARM", "PD", "GUN" };

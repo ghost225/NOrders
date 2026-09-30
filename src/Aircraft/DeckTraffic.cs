@@ -47,7 +47,14 @@ namespace NOrders
         {
             if (field == null || aircraft == null) return;
             launchedFrom[aircraft] = field;
+            launchedAt[aircraft] = Time.unscaledTime;       // the clock launch requests are stamped with
         }
+
+        private static readonly Dictionary<Aircraft, float> launchedAt = new Dictionary<Aircraft, float>();
+
+        // When the hangar at this field built the aircraft, or -1.
+        internal static float LaunchedAt(Airbase field, Aircraft aircraft) =>
+            CameFrom(field, aircraft) && launchedAt.TryGetValue(aircraft, out float at) ? at : -1f;
 
         internal static bool CameFrom(Airbase field, Aircraft aircraft) =>
             aircraft != null && launchedFrom.TryGetValue(aircraft, out Airbase from) && from == field;
@@ -58,7 +65,7 @@ namespace NOrders
             var gone = new List<Aircraft>();
             foreach (KeyValuePair<Aircraft, Airbase> entry in launchedFrom)
                 if (entry.Key == null || entry.Key.disabled || entry.Value == null) gone.Add(entry.Key);
-            foreach (Aircraft aircraft in gone) launchedFrom.Remove(aircraft);
+            foreach (Aircraft aircraft in gone) { launchedFrom.Remove(aircraft); launchedAt.Remove(aircraft); }
         }
 
         public static List<DeckMovement> Movements(Airbase deck)
