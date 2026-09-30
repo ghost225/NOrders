@@ -47,7 +47,9 @@ namespace NOrders
                 // so, a radar or anti-radiation seeker is steered onto it --
                 // and the weapon's own alignment limit is kept when tighter.
                 string guidance = Guidance(info);
-                float cone = guidance == "Optical" || guidance == "Laser" ? Tuning.MaxLaunchAngleOptical : guidance == "IR" ? Tuning.MaxLaunchAngleInfrared : Tuning.MaxLaunchAngle;
+                float cone = guidance == "Optical" || guidance == "Laser" ? Tuning.MaxLaunchAngleOptical
+                    : guidance.Length == 0 ? Tuning.MaxLaunchAngleRocket        // no seeker: an unguided rocket
+                    : Tuning.MaxLaunchAngle;
                 float limit = Mathf.Min(cone, info.targetRequirements.minAlignment > 0f ? info.targetRequirements.minAlignment : 180f);
                 Vector3 toTarget = target.transform.position - aircraft.transform.position;
                 float angle = toTarget.sqrMagnitude > 1f ? Vector3.Angle(aircraft.transform.forward, toTarget) : 0f;

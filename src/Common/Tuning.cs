@@ -31,9 +31,9 @@ namespace NOrders
         // ninety degrees and they went nowhere. Weapons whose own alignment
         // limit is tighter keep theirs; a seeker that must see the target at
         // launch (optical, laser) gets the tighter cone below.
-        public static float MaxLaunchAngle = 70f;
-        public static float MaxLaunchAngleOptical = 30f;
-        public static float MaxLaunchAngleInfrared = 60f;
+        public static float MaxLaunchAngle = 70f;           // radar, anti-radiation and heat-seeking missiles
+        public static float MaxLaunchAngleOptical = 45f;    // optical and laser seekers: the target in the seeker's view
+        public static float MaxLaunchAngleRocket = 15f;     // unguided rockets: pointed at it
         public static float IrBurstRange = 3000f;
         public static int IrBurstFlares = 4;
         public static float IrBurstPause = 1.5f;      // between strings while the shot keeps coming
