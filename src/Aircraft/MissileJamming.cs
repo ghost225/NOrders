@@ -172,6 +172,7 @@ namespace NOrders
                 if (aircraft == null || aircraft.disabled || Host.IsFlownByPlayer(flight)) continue;
                 List<Pod> pods = Pods(aircraft);
                 if (pods.Count == 0) continue;
+                Inventory(flight, aircraft, pods);
 
                 Inbound(aircraft, pods[0].Station, inbound);
                 tasks.Clear();
@@ -202,6 +203,33 @@ namespace NOrders
                     }
             }
             announced.RemoveWhere(m => m == null || m.disabled);
+        }
+
+        // Once per aircraft: what was counted as a jammer, station by station,
+        // and the jam capacity that gives -- to check a jam list's limit
+        // against what the airframe really carries.
+        private static readonly HashSet<Aircraft> inventoried = new HashSet<Aircraft>();
+
+        private static void Inventory(Flight flight, Aircraft aircraft, List<Pod> pods)
+        {
+            if (!inventoried.Add(aircraft)) return;
+            inventoried.RemoveWhere(a => a == null);
+            var counts = new Dictionary<string, int>();
+            var detail = new Dictionary<string, string>();
+            foreach (Pod pod in pods)
+            {
+                string key = (pod.Station?.WeaponInfo?.weaponName ?? "?") + " [" + pod.Weapon.GetType().Name + "]";
+                counts.TryGetValue(key, out int n);
+                counts[key] = n + 1;
+                float listed = pod.Station?.WeaponInfo != null ? pod.Station.WeaponInfo.targetRequirements.maxRange : 0f;
+                detail[key] = "flag " + (pod.Station?.WeaponInfo != null && pod.Station.WeaponInfo.jammer) + ", range " + (listed / 1000f).ToString("0.0") + " km";
+            }
+            var parts = new List<string>();
+            foreach (KeyValuePair<string, int> entry in counts) parts.Add(entry.Key + " ×" + entry.Value + " (" + detail[entry.Key] + ")");
+            int ecm = aircraft.GetComponentsInChildren<RadarJammer>(true).Length;
+            Host.LogInfo("[flight] " + flight.Name + " · jammers counted: " + string.Join("; ", parts.ToArray()) +
+                " · built-in ECM " + ecm + " (not counted) · jam capacity " + FlightOrders.JamCapacity(flight) +
+                (pods.Count >= 2 ? ", one kept for missiles" : ""));
         }
 
         // Radar-guided shots at this aircraft that the pod can jam: its side
