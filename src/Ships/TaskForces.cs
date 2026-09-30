@@ -64,6 +64,7 @@ namespace NOrders
         internal GlobalPosition Station;
         internal bool GivingWay;
         internal bool Shoal;                     // its station was pulled in off shallow water
+        internal bool Joiner;                    // joined a custom formation and given a station astern
     }
 
     internal static class TaskForces
@@ -128,8 +129,10 @@ namespace NOrders
             if (existing == force) { reason = ShipNames.Of(ship) + " is already in " + force.Name + "."; return false; }
             if (existing != null) Remove(ship);
             if (!Ownership.Claim(ship)) { reason = "Another mod is commanding " + ShipNames.Of(ship) + "."; return false; }
-            force.Escorts.Add(new Escort { Ship = ship });
-            Layout(force);
+            var joined = new Escort { Ship = ship };
+            force.Escorts.Add(joined);
+            if (force.Formation == Formation.Custom) PlaceJoiner(force, joined);
+            else Layout(force);
             Host.LogInfo("[tf] " + ShipNames.Of(ship) + " joins " + force.Name);
             return true;
         }
@@ -187,11 +190,37 @@ namespace NOrders
 
         // A station dragged in the formation editor: the formation becomes a
         // custom one, and the escort sails for it straight away.
+        // A custom formation keeps its stations as dragged, so a ship joining
+        // one had none: bearing and range zero, a station on top of the guide,
+        // which it sailed at and circled -- how ships past the first twenty or
+        // so in a player's custom layout never formed up. It is given one
+        // astern of the furthest, joiners fanned out either side, to be
+        // dragged where it belongs.
+        private static void PlaceJoiner(TaskForce force, Escort joined)
+        {
+            float furthest = Gap(force);
+            int placed = 0;
+            foreach (Escort escort in force.Escorts)
+            {
+                if (escort == joined) continue;
+                furthest = Mathf.Max(furthest, escort.Range);
+                if (escort.Joiner) placed++;
+            }
+            float step = Mathf.Max(Gap(force), 2f * joined.Ship.maxRadius + 150f);
+            int side = placed % 2 == 0 ? 1 : -1, rank = placed / 6;
+            float bearing = 180f + side * 18f * ((placed % 6 + 1) / 2);
+            Place(joined, bearing, furthest + step * (1 + rank));
+            joined.Joiner = true;
+            Host.LogInfo("[tf] " + ShipNames.Of(joined.Ship) + " given a station astern of the custom formation · " +
+                joined.Bearing.ToString("000") + "° " + joined.Range.ToString("0") + " m");
+        }
+
         internal static void MoveStation(TaskForce force, Escort escort, float bearing, float metres)
         {
             if (force == null || escort == null) return;
             force.Formation = Formation.Custom;
             escort.ThreatArc = false;
+            escort.Joiner = false;
             escort.Bearing = bearing;
             escort.Range = metres;
             escort.NextIssue = 0f;
@@ -230,8 +259,13 @@ namespace NOrders
             }
             Escort escort = EscortOf(ship);
             if (escort == null || escort.Detached) return;
+            // Ordered with the guide, from anywhere in the formation: the outer
+            // ranks of a big force sit further out than a fixed 3 km, and were
+            // being detached by an order meant for the whole force.
+            float reach = 3000f;
+            foreach (Escort other in force.Escorts) reach = Mathf.Max(reach, other.Range + 2000f);
             bool together = guideOrderedForce == force && Time.timeSinceLevelLoad - guideOrderedAt < 2f &&
-                force.Guide != null && FastMath.Distance(ship.GlobalPosition(), force.Guide.GlobalPosition()) < 3000f;
+                force.Guide != null && FastMath.Distance(ship.GlobalPosition(), force.Guide.GlobalPosition()) < reach;
             if (together) return;
             escort.Detached = true;
             Host.LogInfo("[tf] " + ShipNames.Of(ship) + " detached from " + force.Name);
@@ -484,15 +518,39 @@ namespace NOrders
                 foreach (Escort escort in force.Escorts)
                 {
                     if (escort.Detached) continue;
+                    // Joined a custom formation before joiners were given a
+                    // station: give it one now.
+                    if (force.Formation == Formation.Custom && escort.Range < 1f) PlaceJoiner(force, escort);
                     Keep(force, escort);
                     worst = Mathf.Max(worst, escort.OffStation);
                 }
                 Pace(force, worst);
                 Trace(force);
+                Summary(force);
             }
         }
 
-        private static float nextTrace;
+        private static float nextTrace, nextSummary;
+
+        // Once a minute, always logged: how the force is doing, and by name
+        // any ship that is not keeping station -- so a report of ships "not
+        // following" can be read off the log.
+        private static void Summary(TaskForce force)
+        {
+            if (force.Escorts.Count < 8 || Time.timeSinceLevelLoad < nextSummary) return;
+            nextSummary = Time.timeSinceLevelLoad + 60f;
+            int onStation = 0;
+            var off = new List<string>();
+            foreach (Escort escort in force.Escorts)
+            {
+                if (escort.Ship == null) continue;
+                string state = Describe(force, escort);
+                if (state == "on station") { onStation++; continue; }
+                off.Add(ShipNames.Of(escort.Ship) + " " + state + (escort.Shoal ? " (shoal)" : ""));
+            }
+            Host.LogInfo("[tf] " + force.Name + " · " + force.Escorts.Count + " escorts · " + onStation + " on station" +
+                (off.Count > 0 ? " · " + string.Join("; ", off.ToArray()) : ""));
+        }
 
         private static void Trace(TaskForce force)
         {
@@ -752,15 +810,23 @@ namespace NOrders
                 Vector3 relative = other.rb.velocity - myVelocity;
                 relative.y = 0f;
                 float speed = relative.sqrMagnitude;
-                if (speed < 0.01f) continue;
+                // Ships keeping formation together drift a metre a second or so
+                // against each other; that is station keeping, not a closing
+                // contact. Counting it had a big formation's neighbours, 400 m
+                // apart against a 550 m safety distance, giving way to each
+                // other for good.
+                if (speed < 1.5f * 1.5f) continue;
                 float t = -Vector3.Dot(offset, relative) / speed;
-                if (t < 0f || t > 90f) continue;
+                if (t < 0f || t > 60f) continue;
                 float miss = (offset + relative * t).magnitude;
-                float safe = (ship.maxRadius + other.maxRadius) * 1.5f + 100f;
+                float safe = (ship.maxRadius + other.maxRadius) * 1.1f + 60f;
                 if (miss >= safe) continue;
                 Vector3 forward = myVelocity.sqrMagnitude > 1f ? myVelocity.normalized : ship.transform.forward;
                 forward.y = 0f;
                 Vector3 starboard = new Vector3(forward.z, 0f, -forward.x).normalized;
+                // One of the two gives way, not both: the one with the other on
+                // its starboard side, as at sea -- and always to the guide.
+                if (other != force.Guide && Vector3.Dot(offset, starboard) < 0f) continue;
                 aim = ship.GlobalPosition() + (forward + starboard).normalized * 1500f;
                 knots = Mathf.Max(3f, knots * 0.5f);
                 escort.NextIssue = 0f;              // steer away now, not in three seconds
