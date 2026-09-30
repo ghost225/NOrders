@@ -929,6 +929,12 @@ namespace NOrders
             if (flight == null) return;
             StopJamming(flight);
             if (!append) flight.Route.Clear();
+            // A leg added to a flight working an area runs on from that area:
+            // the area's centre is the route's first point. Starting over from
+            // wherever the aircraft happened to be dropped the waypoint just
+            // placed and flew straight to the new one.
+            else if (flight.Mode == FlightMode.Orbit && flight.Route.Count == 0)
+                flight.Route.Add(flight.OrbitCentre);
             flight.Route.Add(point);
             flight.Mode = FlightMode.Route;
         }
