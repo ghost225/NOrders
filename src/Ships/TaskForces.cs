@@ -154,17 +154,18 @@ namespace NOrders
             }
             // A force lives as long as it has a guide: formed first and filled
             // afterwards, or down to its last ship, it is still there to add to.
-            if (force.Guide == null) Disband(force);
+            if (force.Guide == null) Disband(force, "its last ship left");
             else Layout(force);
         }
 
-        internal static void Disband(TaskForce force)
+        internal static void Disband(TaskForce force, string why = "ordered")
         {
             if (force == null) return;
+            int ships = force.Count;
             foreach (Ship ship in new List<Ship>(force.Ships())) Release(ship);
             force.Escorts.Clear();
             forces.Remove(force);
-            Host.LogInfo("[tf] " + force.Name + " disbanded");
+            Host.LogInfo("[tf] " + force.Name + " disbanded · " + why + " · " + ships + " ship(s)");
         }
 
         internal static void MakeGuide(Ship ship)
@@ -510,7 +511,7 @@ namespace NOrders
             {
                 force.Escorts.RemoveAll(e => e.Ship == null || e.Ship.disabled);
                 if (force.Guide == null || force.Guide.disabled) { force.Guide = null; PromoteGuide(force); }
-                if (force.Guide == null) { Disband(force); continue; }
+                if (force.Guide == null) { Disband(force, "guide lost, no ship left to take over"); continue; }
                 if (force.Escorts.Count == 0) continue;
                 Smooth(force, dt);
                 RecordWake(force);
