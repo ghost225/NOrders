@@ -1,3 +1,4 @@
+using System;
 using HarmonyLib;
 using UnityEngine;
 
@@ -27,6 +28,7 @@ namespace NOrders
             Pilot pilot = FlightOrders.FirstPilot(aircraft);
             PilotBaseState state = pilot?.currentState;
             if (pilot != null && pilot.flightInfo.HasTakenOff) return;      // an ejection in flight is its own story
+            flight.AbandonedOnGround = true;                               // no sortie bonus for this one
 
             float roll = aircraft.cockpit != null ? Mathf.Asin(Mathf.Clamp(Vector3.Dot(aircraft.cockpit.xform.right, Vector3.up), -1f, 1f)) * Mathf.Rad2Deg : 0f;
             string detail = "";
@@ -51,6 +53,62 @@ namespace NOrders
                 " · nearest aircraft " + (nearest != null ? (FlightOrders.Of(nearest)?.Name ?? nearest.definition?.unitName ?? "?") +
                     " at " + gap.ToString("0") + " m" : "none"));
             Host.Say(flight.Name + " · abandoned on the ground before take-off, airframe back in reserve");
+        }
+    }
+
+    // Our aircraft taxi at a taxiing speed.
+    //
+    // The game's taxi state asks for up to 30 m/s and gives half throttle
+    // whenever it is under that -- on a high-thrust jet, a mod's especially,
+    // that shot aircraft out of the hangar and off the taxiway onto the
+    // grass. Capped at 12 m/s, 8 for the first quarter-minute out of the
+    // hangar; faster than that, off the power and on the brakes.
+    [HarmonyPatch(typeof(AIPilotTaxiState), nameof(AIPilotTaxiState.FixedUpdateState))]
+    internal static class TaxiSpeedPatch
+    {
+        private const string Name = "Taxi speed";
+        private static readonly System.Reflection.FieldInfo Inputs = AccessTools.Field(typeof(PilotBaseState), "controlInputs");
+
+        private static void Postfix(AIPilotTaxiState __instance, Pilot pilot)
+        {
+            if (!Guard.Ok(Name)) return;
+            try
+            {
+                Aircraft aircraft = pilot?.aircraft;
+                if (aircraft == null || pilot.playerControlled || pilot.flightInfo.HasTakenOff || FlightOrders.Of(aircraft) == null) return;
+                if (!(Inputs?.GetValue(__instance) is ControlInputs inputs)) return;
+                float limit = Time.timeSinceLevelLoad - pilot.flightInfo.spawnTime < 15f ? 8f : 12f;
+                if (aircraft.speed > limit)
+                {
+                    inputs.throttle = Mathf.Min(inputs.throttle, 0.01f);
+                    inputs.brake = Mathf.Max(inputs.brake, Mathf.Clamp01((aircraft.speed - limit) * 0.3f + 0.3f));
+                }
+                else if (aircraft.speed > limit * 0.8f)
+                    inputs.throttle = Mathf.Min(inputs.throttle, 0.15f);
+            }
+            catch (Exception ex) { Guard.Failed(Name, ex); }
+        }
+    }
+
+    // And only give up on one of ours for a real roll. The taxi state's check
+    // bails the pilot out past about three degrees -- a bump on the grass --
+    // where twelve is an aircraft actually going over.
+    [HarmonyPatch(typeof(AIPilotTaxiState), "EjectCheck")]
+    internal static class TaxiRollPatch
+    {
+        private const string Name = "Taxi roll check";
+        private static readonly System.Reflection.FieldInfo AircraftOf = AccessTools.Field(typeof(PilotBaseState), "aircraft");
+
+        private static bool Prefix(AIPilotTaxiState __instance)
+        {
+            if (!Guard.Ok(Name)) return true;
+            try
+            {
+                if (!(AircraftOf?.GetValue(__instance) is Aircraft aircraft) || FlightOrders.Of(aircraft) == null || aircraft.cockpit == null) return true;
+                float roll = Mathf.Abs(Vector3.Dot(aircraft.cockpit.xform.right, Vector3.up));
+                return roll > Mathf.Sin(12f * Mathf.Deg2Rad);
+            }
+            catch (Exception ex) { Guard.Failed(Name, ex); return true; }
         }
     }
 }

@@ -336,7 +336,7 @@ namespace NOrders
             if (flight == null || aircraft.definition == null) return;
             // Never airborne: abandoned in the taxi, not brought home.
             Pilot pilot = FlightOrders.FirstPilot(aircraft);
-            if (pilot != null && !pilot.flightInfo.HasTakenOff) return;
+            if (flight.AbandonedOnGround || (pilot != null && !pilot.flightInfo.HasTakenOff)) return;
             if (!GameManager.GetLocalPlayer<Player>(out Player player) || player == null) return;
 
             float rate = MissionManager.CurrentMission != null

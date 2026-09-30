@@ -65,6 +65,7 @@ namespace NOrders
         // An airdrop along a line: this aircraft's stretch of it, the point
         // it flies to first so it runs in along the line, and the gap between
         // items so its load is spread along the stretch.
+        internal bool AbandonedOnGround;    // the pilot got out before it ever flew
         internal bool HasDropLine, LeadInPending;
         internal GlobalPosition DropLineStart, DropLineEnd, LeadIn;
         internal float DropSpacing;
