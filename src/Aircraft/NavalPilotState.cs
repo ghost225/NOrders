@@ -398,6 +398,15 @@ namespace NOrders
             Vector3 left = new Vector3(-toMissile.z, 0f, toMissile.x);
             Vector3 forward = Flat(aircraft.transform.forward);
             Vector3 beam = Vector3.Dot(forward, left) >= 0f ? left : -left;
+            // Whichever beam faces home, when one clearly does. Taking the side
+            // nearer the nose every time let a string of shots walk a transport
+            // deeper and deeper into enemy ground, one beam turn at a time.
+            Vector3 home = Flat(flight.HomePosition - aircraft.GlobalPosition());
+            if (home.sqrMagnitude > 1000f * 1000f)
+            {
+                float toward = Vector3.Dot(home.normalized, left);
+                if (Mathf.Abs(toward) > 0.25f) beam = toward > 0f ? left : -left;
+            }
             float ordered = flight.Altitude;
             flight.Altitude = descend
                 ? Mathf.Max(Mathf.Min(aircraft.radarAlt * 0.7f, ordered), Tuning.RadarEvasionFloor)

@@ -33,6 +33,7 @@ namespace NOrders
         // at full power) instead of the native pilot's dive to the deck, which
         // put heavy airframes into the sea and handed them back stalled.
         public static bool OwnRadarEvasion = true;
+        public static bool StandOnWhenCovered = true;
         public static float RadarEvasionFloor = 250f;   // metres above ground the descent stops at
         public static bool PreFlare = true;
         public static float PreFlareInterval = 2f;

@@ -82,9 +82,12 @@ namespace NOrders
         public float LastBurstAt;           // IR defence: when the last string of flares ended
         // A heat-seeker inbound and the flight not on a run-in or in a fight
         // the native pilot is flying: our state flies the beam turn.
-        public bool EvadingInfrared => Threat == FlightThreat.Missile && ThreatIsInfrared && ThreatMissile != null && !ThreatMissile.disabled;
+        // Shot at, but defending itself where it is -- pods on every radar
+        // shot, flares for the rest -- so it keeps to its orders.
+        public bool StandOn;
+        public bool EvadingInfrared => !StandOn && Threat == FlightThreat.Missile && ThreatIsInfrared && ThreatMissile != null && !ThreatMissile.disabled;
         // A radar shot inbound and our state keeping the aircraft: beam, chaff, descend.
-        public bool EvadingRadar => Tuning.OwnRadarEvasion && Threat == FlightThreat.Missile && !ThreatIsInfrared && ThreatMissile != null && !ThreatMissile.disabled;
+        public bool EvadingRadar => !StandOn && Tuning.OwnRadarEvasion && Threat == FlightThreat.Missile && !ThreatIsInfrared && ThreatMissile != null && !ThreatMissile.disabled;
         public float NextFlare;
         public float NextPreFlare;
         public int FlaresThisShot;
@@ -270,7 +273,7 @@ namespace NOrders
 
         // Whatever the standing task is, what it is doing right now comes first.
         public string Status =>
-            Threat == FlightThreat.Missile ? "EVADING"
+            Threat == FlightThreat.Missile ? (StandOn ? "DEFENDING" : "EVADING")
             : Interrupted ? "ENGAGING"
             : null;
 
@@ -1548,6 +1551,15 @@ namespace NOrders
                 flight.ThreatIsInfrared = infrared;
                 flight.ThreatRange = nearestShot;
                 flight.ThreatMissile = threat == FlightThreat.Missile ? nearestMissile : null;
+                string cover = "";
+                bool standOn = threat == FlightThreat.Missile && Tuning.StandOnWhenCovered && !Host.IsFlownByPlayer(flight) &&
+                    Covered(aircraft, out cover);
+                if (standOn != flight.StandOn)
+                {
+                    flight.StandOn = standOn;
+                    if (standOn) Tracing.Flight("[flight] " + flight.Name + " · shot at, covered · " + cover + " · holding its orders");
+                    else if (threat == FlightThreat.Missile) Tracing.Flight("[flight] " + flight.Name + " · no longer covered, evading");
+                }
                 if (nearestMissile != null)
                 {
                     flight.LastThreat = (nearestMissile.GetWeaponInfo()?.weaponName ?? nearestMissile.name) + (infrared ? " (heat-seeking)" : " (radar)") +
@@ -1573,8 +1585,54 @@ namespace NOrders
         }
 
         // Does the flight's ROE let the native pilot take it right now?
+        // Can this aircraft defend itself against everything coming at it
+        // without leaving its task? Every radar-guided shot within its pods'
+        // reach is one they can take -- tracked by our side, and no more of
+        // them than pods; those still beyond reach are not yet a reason to
+        // turn. Every heat-seeker needs flares left. And a radar shot that is
+        // still coming inside 2.5 km is evaded whatever the pods are doing.
+        private const float StandOnLastDitch = 2500f;
+
+        private static bool Covered(Aircraft aircraft, out string cover)
+        {
+            cover = "";
+            List<MissileJamming.Pod> pods = MissileJamming.Pods(aircraft);
+            if (pods.Count == 0) return false;             // only an aircraft that can jam holds on
+            float reach = pods.Count > 0 && pods[0].Station?.WeaponInfo != null && pods[0].Station.WeaponInfo.targetRequirements.maxRange > 0f
+                ? pods[0].Station.WeaponInfo.targetRequirements.maxRange : 20000f;
+            FactionHQ hq = aircraft.NetworkHQ;
+            int radarInReach = 0, radarFar = 0, heat = 0;
+            foreach (Unit unit in UnitRegistry.allUnits)
+            {
+                if (!(unit is Missile missile) || missile.disabled || missile.targetID != aircraft.persistentID) continue;
+                float range = Vector3.Distance(missile.transform.position, aircraft.transform.position);
+                if (missile.GetComponent<IRSeeker>() != null)
+                {
+                    if (IrDefence.FlareFraction(aircraft) <= 0f) return false;
+                    heat++;
+                    continue;
+                }
+                if (range < StandOnLastDitch) return false;
+                string seeker = missile.GetSeekerType();
+                bool jammable = seeker == "ARH" || seeker == "SARH";
+                if (range > reach) { radarFar++; continue; }
+                if (!jammable) return false;
+                if (hq != null && !hq.IsTargetBeingTracked(missile)) return false;
+                radarInReach++;
+            }
+            if (radarInReach > pods.Count) return false;
+            cover = (radarInReach > 0 ? radarInReach + " radar shot(s) jammed" : "") +
+                (radarFar > 0 ? (radarInReach > 0 ? ", " : "") + radarFar + " still beyond pod reach" : "") +
+                (heat > 0 ? ((radarInReach + radarFar) > 0 ? ", " : "") + heat + " heat-seeker(s) flared" : "");
+            return true;
+        }
+
         private static bool ShouldYield(Flight flight)
         {
+            // Covered: the shot is its pods' and flares' business, not a
+            // reason to hand the aircraft to the game's evasion.
+            if (flight.StandOn && flight.Threat == FlightThreat.Missile)
+                return flight.Mode == FlightMode.Engage || (flight.Mode == FlightMode.Strike && flight.RunInDone);
             // Once the combat pilot has the attack, it keeps it. On the run in,
             // a radar shot is evaded, but a heat-seeker is flared off without
             // leaving the run -- breaking away throws the attack away.

@@ -55,7 +55,7 @@ namespace NOrders
             if (missile && infrared)
             {
                 // Engines cold for as long as it is coming.
-                flight.ThrottleCutUntil = now + 0.5f;
+                if (!flight.StandOn) flight.ThrottleCutUntil = now + 0.5f;
                 // A fresh shot, or the last one gone past: a new string. A
                 // string that did not shake it is followed by another after a
                 // pause, while the flares last.
@@ -73,7 +73,7 @@ namespace NOrders
                     if (flight.FlaresThisShot == 1)
                         Tracing.Flight("[flight] " + flight.Name + " · heat-seeker at " +
                             UnitConverter.DistanceReading(shotRange) + " · idle, flaring" +
-                            (flight.Mode == FlightMode.Strike ? ", holding the run" : ", turning to the beam"));
+                            (flight.Mode == FlightMode.Strike ? ", holding the run" : flight.StandOn ? ", holding its orders" : ", turning to the beam"));
                 }
                 return;
             }
