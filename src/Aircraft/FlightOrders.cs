@@ -54,6 +54,11 @@ namespace NOrders
         public FlightMode PreviousMode = FlightMode.Orbit;
         public FlightRoe Roe = FlightRoe.Tight;
         public int MissilesPerTarget;      // 0: the defaults in Tuning
+        // Targets gathered for a strike not yet authorised (the lead's), and
+        // the list this aircraft is working down once it is.
+        public readonly List<StrikeItem> StrikePlan = new List<StrikeItem>();
+        public readonly List<StrikeItem> StrikeList = new List<StrikeItem>();
+        internal float StrikeListCheck, PassFirstShot, NextFollowUp;
         public int AmmoAtAttack = -1;       // total rounds when the run began
         public GlobalPosition CargoPoint;
         public bool Airdrop;
@@ -628,9 +633,14 @@ namespace NOrders
 
                 if (flight.Mode == FlightMode.Strike && (Host.Dead(flight.Target)))
                 {
-                    Host.LogInfo("[flight] " + flight.Name + " · target destroyed, breaking off");
-                    BreakOff(flight);
+                    if (flight.StrikeList.Count > 0) StrikePlans.Next(flight, "target down");
+                    else
+                    {
+                        Host.LogInfo("[flight] " + flight.Name + " · target destroyed, breaking off");
+                        BreakOff(flight);
+                    }
                 }
+                StrikePlans.Tick(flight);
 
                 // Pressing an attack that never produces a release. The usual
                 // cause is bombs against a track the AI will not drop on, but
@@ -673,7 +683,9 @@ namespace NOrders
                 if (flight.Mode == FlightMode.Strike && flight.AmmoAtAttack >= 0 && !IsAirTarget(flight.Target) && flight.SalvoLeft <= 0)
                 {
                     int now = TotalAmmo(flight.Aircraft);
-                    if (now >= 0 && now < flight.AmmoAtAttack) Egress(flight);
+                    // On a strike list, the other weapons' targets reachable
+                    // from here go on the same pass before it turns away.
+                    if (now >= 0 && now < flight.AmmoAtAttack && !StrikePlans.FollowUp(flight)) Egress(flight);
                 }
 
                 if (flight.Mode == FlightMode.Egress)
@@ -687,7 +699,9 @@ namespace NOrders
                     bool clear = Host.Dead(flight.Target) ||
                         FastMath.Distance(flight.Aircraft.GlobalPosition(), flight.Target.GlobalPosition())
                             >= Tuning.StandoffMetres;
-                    if (clear || Time.timeSinceLevelLoad >= flight.EgressUntil)
+                    if ((clear || Time.timeSinceLevelLoad >= flight.EgressUntil) && flight.StrikeList.Count > 0)
+                        StrikePlans.Next(flight, "after the pass");
+                    else if (clear || Time.timeSinceLevelLoad >= flight.EgressUntil)
                     {
                         // Out of danger. Press again only with something left to
                         // press with, and only if the target is still there.
@@ -966,6 +980,7 @@ namespace NOrders
         public static void SetRoute(Flight flight, GlobalPosition point, bool append)
         {
             if (flight == null) return;
+            StrikePlans.Cancel(flight);
             LeaveJamStation(flight);
             if (!append) flight.Route.Clear();
             // A leg added to a flight working an area runs on from that area:
@@ -981,6 +996,7 @@ namespace NOrders
         public static void Orbit(Flight flight, GlobalPosition centre)
         {
             if (flight == null) return;
+            StrikePlans.Cancel(flight);
             flight.OrbitCentre = centre;
             flight.Route.Clear();
             flight.Mode = FlightMode.Orbit;
@@ -993,6 +1009,7 @@ namespace NOrders
         public static void SetArea(Flight flight, GlobalPosition centre, float radius)
         {
             if (flight == null) return;
+            StrikePlans.Cancel(flight);
             flight.OrbitCentre = centre;
             flight.OrbitRadius = Mathf.Clamp(radius, 500f, 60000f);
             flight.Route.Clear();
@@ -1020,6 +1037,7 @@ namespace NOrders
         public static void Station(Flight flight, Ship on = null)
         {
             if (flight == null || (flight.Home == null && on == null)) return;
+            StrikePlans.Cancel(flight);
             LeaveJamStation(flight);
             flight.StationShip = on;
             flight.Route.Clear();
@@ -1035,6 +1053,7 @@ namespace NOrders
         public static void Strike(Flight flight, Unit target, string preferredWeapon = null)
         {
             if (flight == null || target == null) return;
+            StrikePlans.Cancel(flight);            // a plain strike replaces any list
             flight.PreferredWeapon = preferredWeapon;
             flight.WarnedAboutTrack = false;
             flight.StrikeStarted = Time.timeSinceLevelLoad;
@@ -1043,6 +1062,7 @@ namespace NOrders
             flight.SettingUp = false;
             flight.RunInStarted = Time.timeSinceLevelLoad;
             flight.SalvoLeft = 0;
+            flight.PassFirstShot = 0f;
             flight.InLaunchRangeSince = -1f;
             if (flight.Mode != FlightMode.Strike && flight.Mode != FlightMode.Egress) flight.PreviousMode = flight.Mode;
             flight.Target = target;
@@ -1504,6 +1524,7 @@ namespace NOrders
         public static void Engage(Flight flight)
         {
             if (flight == null) return;
+            StrikePlans.Cancel(flight);
             flight.Mode = FlightMode.Engage;
         }
 
@@ -1721,6 +1742,7 @@ namespace NOrders
         public static void ReturnToBase(Flight flight)
         {
             if (flight == null) return;
+            StrikePlans.Cancel(flight);
             flight.JamTargets.Clear();
             // Round the missiles first, if the host mod knows a way.
             if (flight.HomingVia == null && flight.Aircraft != null && !flight.Aircraft.disabled)
