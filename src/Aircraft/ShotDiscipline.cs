@@ -64,6 +64,27 @@ namespace NOrders
                     OffNose++;
                     return false;
                 }
+                // Overkill: an over-the-horizon (anti-ship) missile, or one that
+                // costs several times what the target is worth, is not spent on
+                // a vehicle when another armed anti-surface station in range
+                // will do -- an Alkyon put anti-ship cruise missiles into a few
+                // tanks. The cheaper station is selected and the shot proceeds
+                // with it; with nothing else in range the shot is held.
+                if (!(target is Aircraft) && !(target is Ship) && Overkill(info, target))
+                {
+                    WeaponStation cheaper = CheaperStation(aircraft, __instance, target, info);
+                    float at = Time.timeSinceLevelLoad;
+                    if (!said.TryGetValue((aircraft, target), out float lastOver) || at - lastOver > 20f)
+                    {
+                        said[(aircraft, target)] = at;
+                        Tracing.Flight("[flight] " + (flight?.Name ?? aircraft.definition?.unitName ?? aircraft.name) + " · " + (info.weaponName ?? "missile") + " is overkill for " + ShipNames.Of(target) +
+                            (cheaper != null ? " · using " + (cheaper.WeaponInfo.weaponName ?? "another station") + " instead" : " · holding fire"));
+                    }
+                    Overkills++;
+                    if (cheaper == null) return false;
+                    __instance.currentWeaponStation = cheaper;
+                    station = cheaper; info = cheaper.WeaponInfo;
+                }
                 int allowed = target is Aircraft ? 2 : Mathf.Clamp(Mathf.CeilToInt(info.CalcAttacksNeeded(target)), 1, 4);
                 int live = Closing(aircraft.NetworkHQ, target);
                 if (live < allowed)
@@ -89,6 +110,33 @@ namespace NOrders
                 return false;
             }
             catch (Exception ex) { Guard.Failed(Name, ex); return true; }
+        }
+
+        internal static int Overkills;
+
+        private static bool Overkill(WeaponInfo info, Unit target)
+        {
+            if (info.overHorizon || info.strategic) return true;
+            float worth = target?.definition != null ? Mathf.Max(target.definition.value, 1f) : 1f;
+            return info.costPerRound > worth * 3f;
+        }
+
+        // Another armed anti-surface station aboard whose weapon reaches the
+        // target and is not itself overkill; the cheapest per round first.
+        private static WeaponStation CheaperStation(Aircraft aircraft, WeaponManager manager, Unit target, WeaponInfo current)
+        {
+            if (aircraft.weaponStations == null) return null;
+            float range = Vector3.Distance(aircraft.transform.position, target.transform.position);
+            WeaponStation best = null;
+            foreach (WeaponStation s in aircraft.weaponStations)
+            {
+                WeaponInfo i = s?.WeaponInfo;
+                if (i == null || i == current || s.Ammo <= 0 || i.gun || i.bomb || i.cargo || i.troops || i.sling || i.jammer) continue;
+                if (i.effectiveness.antiSurface < 0.3f || Overkill(i, target)) continue;
+                if (range > i.targetRequirements.maxRange || range < i.targetRequirements.minRange) continue;
+                if (best == null || i.costPerRound < best.WeaponInfo.costPerRound) best = s;
+            }
+            return best;
         }
 
         // How a weapon's missile finds its target, from the seeker on its
