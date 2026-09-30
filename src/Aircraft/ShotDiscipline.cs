@@ -160,6 +160,10 @@ namespace NOrders
             }
             catch { }
             guidanceOf[info] = type;
+            // Once per weapon type: how the game classifies it, so a cone that
+            // is wrong for a weapon can be read off the log rather than guessed.
+            Tracing.Flight("[flight] weapon · " + (info.weaponName ?? "?") + " · seeker " + (type.Length > 0 ? type : "none") + (info.missile ? " · missile" : "") + (info.laserGuided ? " · laser-guided" : "") + (info.gun ? " · gun" : "") + (info.bomb ? " · bomb" : "") +
+                " · alignment " + info.targetRequirements.minAlignment.ToString("0") + "° · reach " + (info.targetRequirements.maxRange / 1000f).ToString("0.0") + " km");
             return type;
         }
 
