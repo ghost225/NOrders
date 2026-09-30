@@ -23,6 +23,10 @@ namespace NOrders
         public string Name;
         public List<WeaponMount> Options = new List<WeaponMount>();
         public WeaponMount Selected;
+        // Stations that, while loaded, leave this one unusable -- the
+        // airframe's own precludingHardpointSets. The game's loadout screen
+        // greys such a station out and empties it.
+        public List<int> PrecludedBy = new List<int>();
 
         public string SelectedName => Selected == null ? "empty" : Selected.mountName;
     }
@@ -59,13 +63,58 @@ namespace NOrders
                     Index = station.Index,
                     Name = station.Name,
                     Options = station.Options,
-                    Selected = station.Selected
+                    Selected = station.Selected,
+                    PrecludedBy = station.PrecludedBy
                 });
             return copy;
         }
 
+        // The loaded station that leaves this one unusable, or null.
+        public LoadoutStation BlockedBy(LoadoutStation station)
+        {
+            if (station == null || station.PrecludedBy.Count == 0) return null;
+            foreach (LoadoutStation other in Stations)
+                if (other != station && other.Selected != null && station.PrecludedBy.Contains(other.Index)) return other;
+            return null;
+        }
+
+        // Every station a loaded one leaves unusable is emptied, in station
+        // order, the way the game's own screen resolves it. Returns the names
+        // of those emptied.
+        public List<string> Enforce()
+        {
+            var emptied = new List<string>();
+            foreach (LoadoutStation station in Stations)
+            {
+                if (station.Selected == null) continue;
+                if (BlockedBy(station) == null) continue;
+                emptied.Add(station.Name);
+                station.Selected = null;
+            }
+            return emptied;
+        }
+
+        // Loading this station: whatever it leaves unusable is emptied, and
+        // it is refused outright while something else leaves it unusable.
+        public bool Choose(LoadoutStation station, WeaponMount mount, out List<string> emptied)
+        {
+            emptied = new List<string>();
+            if (station == null) return false;
+            if (mount != null && BlockedBy(station) != null) return false;
+            station.Selected = mount;
+            if (mount == null) return true;
+            foreach (LoadoutStation other in Stations)
+            {
+                if (other == station || other.Selected == null || !other.PrecludedBy.Contains(station.Index)) continue;
+                other.Selected = null;
+                emptied.Add(other.Name);
+            }
+            return true;
+        }
+
         public Loadout Build()
         {
+            Enforce();
             var loadout = new Loadout();
             int count = 0;
             foreach (LoadoutStation station in Stations) count = Mathf.Max(count, station.Index + 1);
@@ -180,6 +229,8 @@ namespace NOrders
                 if (set.weaponOptions != null)
                     foreach (WeaponMount mount in set.weaponOptions)
                         if (mount != null) station.Options.Add(mount);
+                if (set.precludingHardpointSets != null)
+                    foreach (byte other in set.precludingHardpointSets) station.PrecludedBy.Add(other);
                 // Restore the last choice for this station when there was one,
                 // matched by name so it survives a different mount list.
                 if (remembered.TryGetValue(definition, out Dictionary<int, string> record) &&
@@ -190,6 +241,9 @@ namespace NOrders
                 }
                 plan.Stations.Add(station);
             }
+            // A remembered loadout from before these rules, or one the rules
+            // now forbid, is brought into line rather than launched as it was.
+            plan.Enforce();
             return plan;
         }
 
