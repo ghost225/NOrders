@@ -66,5 +66,11 @@ namespace NOrders
         // faction can be ordered without the player's permission, and what
         // is bought for them is paid from the faction's funds.
         public static Func<FactionHQ, bool> CommandsFaction = _ => false;
+
+        // A unit this mod owned is being handed to another mod at the player's
+        // request (Ownership.ServiceHandovers): drop it from whatever the host
+        // plans for it. NOrders' own state -- task force, route, components --
+        // is cleared before this is called; ownership passes after it.
+        public static Action<Unit> OnYield = _ => { };
     }
 }

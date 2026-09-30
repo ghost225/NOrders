@@ -85,6 +85,111 @@ namespace NOrders
             return owner != null && owner != Host.ModId;
         }
 
+        // ---- Handover at the player's request ------------------------------
+        //
+        // A mod acting for the human player (Host.PlayerDirected) may ask for
+        // a unit another mod owns: a request marker goes on the unit, and the
+        // owner, on its next update, clears what it has on it and passes the
+        // claim across in the same step -- never released in between, so no
+        // one else can take it. Only a player's request is honoured: two AI
+        // commanders cannot pull units off each other this way.
+        private const string RequestPrefix = "__NOrders.Request:";
+        private const string PlayerTag = "|player";
+
+        // True once this mod owns the unit; false while the request waits.
+        public static bool RequestHandover(Unit unit)
+        {
+            if (unit == null) return false;
+            if (Mine(unit)) return true;
+            if (OwnerOf(unit) == null) return Claim(unit);
+            if (RequestMarker(unit) == null)
+            {
+                var marker = new GameObject(RequestPrefix + Host.ModId + (Host.PlayerDirected ? PlayerTag : ""));
+                marker.transform.SetParent(unit.transform, false);
+                marker.SetActive(false);
+            }
+            return false;
+        }
+
+        public static void WithdrawRequest(Unit unit)
+        {
+            Transform marker = RequestMarker(unit);
+            if (marker == null || !marker.name.StartsWith(RequestPrefix + Host.ModId)) return;
+            marker.name = "__NOrders.Withdrawn";
+            Object.Destroy(marker.gameObject);
+        }
+
+        // Who is asking for the unit, and whether for the player.
+        public static string RequestedBy(Unit unit, out bool player)
+        {
+            player = false;
+            Transform marker = RequestMarker(unit);
+            if (marker == null) return null;
+            string who = marker.name.Substring(RequestPrefix.Length);
+            player = who.EndsWith(PlayerTag);
+            return player ? who.Substring(0, who.Length - PlayerTag.Length) : who;
+        }
+
+        // The claim moves to another mod in place: the marker is renamed, not
+        // dropped and remade, so nothing can claim the unit in between.
+        internal static void Transfer(Unit unit, string to)
+        {
+            if (unit == null || string.IsNullOrEmpty(to)) return;
+            Transform marker = Marker(unit);
+            if (marker == null)
+            {
+                var made = new GameObject(Prefix + to);
+                made.transform.SetParent(unit.transform, false);
+                made.SetActive(false);
+            }
+            else if (marker.name == Prefix + Host.ModId) marker.name = Prefix + to;
+            Transform request = RequestMarker(unit);
+            if (request != null) { request.name = "__NOrders.Served"; Object.Destroy(request.gameObject); }
+        }
+
+        private static float nextService;
+
+        // The owner's side, from every host's update: any unit of ours a
+        // player-directed mod has asked for is handed over.
+        internal static void ServiceHandovers()
+        {
+            if (Time.unscaledTime < nextService) return;
+            nextService = Time.unscaledTime + 0.5f;
+            foreach (Unit unit in new System.Collections.Generic.List<Unit>(UnitRegistry.allUnits))
+            {
+                if (unit == null || !Mine(unit)) continue;
+                string requester = RequestedBy(unit, out bool player);
+                if (requester == null || !player || requester == Host.ModId) continue;
+                Yield(unit, requester);
+            }
+        }
+
+        private static void Yield(Unit unit, string requester)
+        {
+            if (unit is Ship ship) TaskForces.Forget(ship);
+            try { Host.OnYield(unit); } catch (System.Exception ex) { Host.LogWarning("[own] OnYield: " + ex.Message); }
+            // Everything this mod's copy of NOrders put on the unit -- its route,
+            // its engagement rules -- goes, or it would go on steering it.
+            System.Reflection.Assembly ours = typeof(Ownership).Assembly;
+            foreach (MonoBehaviour behaviour in unit.GetComponents<MonoBehaviour>())
+                if (behaviour != null && behaviour.GetType().Assembly == ours) Object.Destroy(behaviour);
+            Transfer(unit, requester);
+            string name = unit is Ship named ? ShipNames.Of(named) : unit.name;
+            Host.LogInfo("[own] " + name + " handed to " + requester + " at the player's request");
+        }
+
+        private static Transform RequestMarker(Unit unit)
+        {
+            if (unit == null) return null;
+            Transform root = unit.transform;
+            for (int i = 0; i < root.childCount; i++)
+            {
+                Transform child = root.GetChild(i);
+                if (child != null && child.name.StartsWith(RequestPrefix)) return child;
+            }
+            return null;
+        }
+
         private static Transform Marker(Unit unit)
         {
             if (unit == null) return null;

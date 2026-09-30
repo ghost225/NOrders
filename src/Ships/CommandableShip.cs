@@ -20,7 +20,14 @@ namespace NOrders
             if (ship != null && !Controlled(ship)) Ownership.Release(ship);
         }
 
-        internal static bool CanCommand(Unit unit, out string reason)
+        // Commandable but for another mod holding it: one the player can ask
+        // for (Ownership.RequestHandover).
+        internal static bool Held(Unit unit) =>
+            unit != null && Ownership.Theirs(unit) && CanCommand(unit, out _, ignoreOwnership: true);
+
+        internal static bool CanCommand(Unit unit, out string reason) => CanCommand(unit, out reason, false);
+
+        internal static bool CanCommand(Unit unit, out string reason, bool ignoreOwnership)
         {
             reason = null;
             var ship = unit as Ship;
@@ -32,7 +39,7 @@ namespace NOrders
             // sent and recalled from its carrier's Amphibious window.
             if (ship.GetComponent<LandingCraftAI>() != null)
             { reason = "Landing craft are run from their carrier's Amphibious window."; return false; }
-            if (Ownership.Theirs(ship))
+            if (!ignoreOwnership && Ownership.Theirs(ship))
             { reason = "Another mod (" + Ownership.OwnerOf(ship) + ") is commanding this ship."; return false; }
             if (!MissionManager.IsRunning || ship.disabled || !ship.gameObject.activeInHierarchy)
             { reason = "This ship is not available in a running mission."; return false; }

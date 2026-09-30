@@ -158,6 +158,18 @@ namespace NOrders
             else Layout(force);
         }
 
+        // Out of its force for a handover: no speed cap or route release here,
+        // the yielding mod strips its components itself.
+        internal static void Forget(Ship ship)
+        {
+            TaskForce force = Of(ship);
+            if (force == null) return;
+            if (force.Guide == ship) { force.Guide = null; PromoteGuide(force); }
+            else force.Escorts.RemoveAll(e => e.Ship == ship);
+            if (force.Guide == null) Disband(force, "its guide was handed over");
+            else Layout(force);
+        }
+
         internal static void Disband(TaskForce force, string why = "ordered")
         {
             if (force == null) return;
@@ -503,6 +515,7 @@ namespace NOrders
 
         internal static void Tick()
         {
+            Guard.Run("Handovers", Ownership.ServiceHandovers);
             if (forces.Count == 0 || Time.timeSinceLevelLoad < nextTick) return;
             float dt = nextTick <= 0f ? 0.5f : Time.timeSinceLevelLoad - (nextTick - 0.5f);
             nextTick = Time.timeSinceLevelLoad + 0.5f;

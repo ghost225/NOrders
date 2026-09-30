@@ -533,6 +533,7 @@ namespace NOrders
             Guard.Run("Laser defence", LaserDefence.Tick);
             Guard.Run("Moving deck recovery", MovingDeckRecovery.Tick);
             Guard.Run("Deck wave-off", DeckWaveOff.Tick);
+            Guard.Run("Handovers", Ownership.ServiceHandovers);
             Guard.Run("Cargo in one pass", CargoBurst.Tick);
             Guard.Run("Fixed-wing drops", FixedWingDrops.Forget);
             for (int i = flights.Count - 1; i >= 0; i--)
