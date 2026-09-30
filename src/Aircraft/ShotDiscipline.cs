@@ -67,8 +67,10 @@ namespace NOrders
             catch (Exception ex) { Guard.Failed(Name, ex); return true; }
         }
 
-        // Our side's missiles that will arrive at this target soon: close,
-        // closing, under half a minute out.
+        // Our side's missiles still on their way to this target: any live
+        // missile of ours with the target's id that is not flying away from
+        // it. A shot launched at 35 km is a shot spent; counting only the
+        // last 15 km let nine native pilots empty their racks in one run.
         internal static int Closing(FactionHQ hq, Unit target)
         {
             int live = 0;
@@ -78,9 +80,8 @@ namespace NOrders
                 if (!(unit is Missile missile) || missile.disabled || missile.NetworkHQ != hq || missile.targetID != target.persistentID) continue;
                 Vector3 toTarget = target.GlobalPosition() - missile.GlobalPosition();
                 float range = toTarget.magnitude;
-                if (range > 15000f) continue;
-                float closing = missile.rb != null ? Vector3.Dot(missile.rb.velocity - (target.rb != null ? target.rb.velocity : Vector3.zero), toTarget / Mathf.Max(range, 1f)) : 0f;
-                if (closing < 30f || range / closing > 40f) continue;
+                float closing = missile.rb != null ? Vector3.Dot(missile.rb.velocity - (target.rb != null ? target.rb.velocity : Vector3.zero), toTarget / Mathf.Max(range, 1f)) : 1f;
+                if (closing < 0f) continue;                                  // past it or lost it
                 live++;
             }
             return live;
