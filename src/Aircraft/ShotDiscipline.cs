@@ -71,13 +71,20 @@ namespace NOrders
         // missile of ours with the target's id that is not flying away from
         // it. A shot launched at 35 km is a shot spent; counting only the
         // last 15 km let nine native pilots empty their racks in one run.
+        private static readonly Dictionary<Missile, float> firstSeen = new Dictionary<Missile, float>();
+        private const float CountsFor = 120f;    // a missile two minutes out is not arriving
+
         internal static int Closing(FactionHQ hq, Unit target)
         {
             int live = 0;
             if (hq == null || target == null) return 0;
+            float now = Time.timeSinceLevelLoad;
+            if (firstSeen.Count > 500) firstSeen.Clear();
             foreach (Unit unit in UnitRegistry.allUnits)
             {
                 if (!(unit is Missile missile) || missile.disabled || missile.NetworkHQ != hq || missile.targetID != target.persistentID) continue;
+                if (!firstSeen.TryGetValue(missile, out float seen)) firstSeen[missile] = seen = now;
+                if (now - seen > CountsFor) continue;
                 Vector3 toTarget = target.GlobalPosition() - missile.GlobalPosition();
                 float range = toTarget.magnitude;
                 float closing = missile.rb != null ? Vector3.Dot(missile.rb.velocity - (target.rb != null ? target.rb.velocity : Vector3.zero), toTarget / Mathf.Max(range, 1f)) : 1f;
