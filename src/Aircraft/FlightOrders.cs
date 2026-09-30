@@ -282,12 +282,55 @@ namespace NOrders
         }
 
         // Whatever the standing task is, what it is doing right now comes first.
-        public string Status =>
-            Threat == FlightThreat.Missile ? (StandOn ? "DEFENDING" : "EVADING")
-            : Interrupted ? "ENGAGING"
-            : Wings.FormingUp(this, out int waitingOn) ? "FORMING UP" + (waitingOn > 0 ? " · waiting for " + waitingOn : "")
-            : Wings.Joining(this, out float off) ? "JOINING · " + UnitConverter.DistanceReading(off)
-            : null;
+        // What it is doing this moment, ahead of its standing task: shot at,
+        // fighting back and at what, the stage of an attack, forming up.
+        public string Status
+        {
+            get
+            {
+                if (Threat == FlightThreat.Missile) return StandOn ? "DEFENDING" : "EVADING";
+                Unit fighting = NativeTarget();
+                if (Interrupted)
+                    return fighting == null ? "ENGAGING"
+                        : (Attackers.ContainsKey(fighting) ? "ATTACKING ATTACKER · " : "ENGAGING · ") + ShipNames.Of(fighting);
+                if (Mode == FlightMode.Strike && RunInDone && fighting != null) return "ATTACKING · " + ShipNames.Of(fighting) + ListProgress();
+                if (activity != null && Time.timeSinceLevelLoad < activityUntil) return activity + (Mode == FlightMode.Strike ? ListProgress() : "");
+                if (Mode == FlightMode.Egress) return "EGRESSING" + ListProgress();
+                if (Mode == FlightMode.Orbit && StrikeList.Count > 0) return "HOLDING · missiles on the way" + ListProgress();
+                if (Wings.FormingUp(this, out int waitingOn)) return "FORMING UP" + (waitingOn > 0 ? " · waiting for " + waitingOn : "");
+                if (Wings.Joining(this, out float off)) return "JOINING · " + UnitConverter.DistanceReading(off);
+                return null;
+            }
+        }
+
+        private string activity;
+        private float activityUntil;
+
+        // Set by whatever is flying it, each frame it applies; lapses a moment
+        // after it stops being said.
+        internal void Doing(string what)
+        {
+            activity = what;
+            activityUntil = Time.timeSinceLevelLoad + 1.5f;
+        }
+
+        private string ListProgress() => StrikeList.Count > 1 ? " · " + StrikeList.Count + " on the list" : "";
+
+        private static readonly System.Reflection.FieldInfo CombatTarget = HarmonyLib.AccessTools.Field(typeof(AIPilotCombatModes), "currentTarget");
+        private static readonly System.Reflection.FieldInfo HeloTarget = HarmonyLib.AccessTools.Field(typeof(AIHeloCombatState), "currentTarget");
+
+        // What the game's combat pilot is going for, when it has the aircraft.
+        private Unit NativeTarget()
+        {
+            PilotBaseState state = Aircraft != null ? FlightOrders.FirstPilot(Aircraft)?.currentState : null;
+            try
+            {
+                if (state is AIPilotCombatModes && CombatTarget != null) return CombatTarget.GetValue(state) as Unit;
+                if (state is AIHeloCombatState && HeloTarget != null) return HeloTarget.GetValue(state) as Unit;
+            }
+            catch { }
+            return null;
+        }
 
         public string Describe()
         {

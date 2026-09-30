@@ -167,6 +167,7 @@ namespace NOrders
                     float ordered = flight.Altitude;
                     // Climb no more than 300 m above where it is: speed comes first.
                     flight.Altitude = Mathf.Clamp(aircraft.radarAlt + 300f, MinimumClearance, Mathf.Max(ordered, MinimumClearance));
+                    flight.Doing("RECOVERING ENERGY");
                     if (recoveringSince < 0f) { recoveringSince = Time.timeSinceLevelLoad; Tracing.Flight("[flight] " + flight.Name + " · recovering energy · " + aircraft.speed.ToString("0") + " m/s at " + aircraft.radarAlt.ToString("0") + " m"); }
                     Steer(aircraft.GlobalPosition() + ahead.normalized * 5000f, default, 30f);
                     flight.Altitude = ordered;
@@ -892,6 +893,7 @@ namespace NOrders
             }
             else if (low && lined && range < release) { CompleteRunIn(pilot, straight ? "lined up" : "in position"); return; }
 
+            flight.Doing(flight.SettingUp ? "SETTING UP THE RUN" : "RUNNING IN · " + UnitConverter.DistanceReading(range));
             float ordered = flight.Altitude;
             flight.Altitude = height;
             Steer(aim);
@@ -996,6 +998,9 @@ namespace NOrders
                     : " · climbing to " + (loft / 1000f).ToString("0") + " km");
             if (note != bvrNote) { bvrNote = note; Tracing.Flight("[flight] " + flight.Name + " · intercept · " + note); }
 
+            flight.Doing(range > launchAt
+                ? (bvrClosingIn ? "CLOSING IN AT " + (BvrHold / 1000f).ToString("0") + " km" : clear ? "PRESSING IN · " + UnitConverter.DistanceReading(range) : "CLIMBING TO LAUNCH · " + (loft / 1000f).ToString("0") + " km")
+                : "LAUNCHING · " + UnitConverter.DistanceReading(range));
             float ordered = flight.Altitude;
             flight.Altitude = loft - ground;
             try
@@ -1062,6 +1067,7 @@ namespace NOrders
             if (Time.timeSinceLevelLoad - flight.RunInStarted > 240f) { CompleteRunIn(pilot, "glide run timed out"); return; }
             if (Horizontal(known, aircraft.GlobalPosition()) < Mathf.Max(info.targetRequirements.minRange, 300f)) { CompleteRunIn(pilot, "too close for a glide"); return; }
             controlInputs.throttle = 1f;
+            flight.Doing("GLIDE RUN · " + UnitConverter.DistanceReading(Horizontal(known, aircraft.GlobalPosition())));
             Steer(known);
             if (!GlideReach(aircraft, info, known) || Time.timeSinceLevelLoad - flight.LastLaunchAt < 2f) return;
             if (flight.SalvoLeft <= 0) flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
@@ -1092,6 +1098,7 @@ namespace NOrders
             float launch = Mathf.Max(needs.maxRange * 0.85f, needs.minRange * 1.5f);
 
             if (range < needs.minRange * 1.1f) { CompleteRunIn(pilot, "inside minimum range"); return; }
+            flight.Doing((range > launch ? "STANDOFF RUN · " : "LAUNCHING · ") + UnitConverter.DistanceReading(range));
             if (range > launch)
             {
                 flight.InLaunchRangeSince = -1f;
@@ -1182,6 +1189,7 @@ namespace NOrders
                     Host.LogInfo("[flight] " + flight.Name + " · marshalling over " + ShipNames.Of(deck) + " until the deck steadies");
                     Host.Say(flight.Name + " · marshalling, " + ShipNames.Of(deck) + " turning");
                 }
+                flight.Doing("MARSHALLING · " + ShipNames.Of(deck) + " turning");
                 FlyOrbit(deck.GlobalPosition(), 3000f);
                 return;
             }
