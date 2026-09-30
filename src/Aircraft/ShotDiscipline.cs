@@ -42,7 +42,20 @@ namespace NOrders
                 if (Host.Dead(target)) return false;
                 int allowed = target is Aircraft ? 2 : Mathf.Clamp(Mathf.CeilToInt(info.CalcAttacksNeeded(target)), 1, 4);
                 int live = Closing(aircraft.NetworkHQ, target);
-                if (live < allowed) return true;
+                if (live < allowed)
+                {
+                    // A ripple weapon fires the whole list in one salvo, and
+                    // the combat AI lists the target once per attack it wants:
+                    // a Scimitar rack went at one Cricket. The list is cut to
+                    // what is still allowed.
+                    int room = allowed - live, kept = 0;
+                    for (int i = 0; i < targets.Count;)
+                    {
+                        if (targets[i] == target && ++kept > room) targets.RemoveAt(i);
+                        else i++;
+                    }
+                    return true;
+                }
                 float now = Time.timeSinceLevelLoad;
                 if (!said.TryGetValue((aircraft, target), out float last) || now - last > 20f)
                 {
