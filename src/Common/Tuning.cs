@@ -31,6 +31,12 @@ namespace NOrders
         // ninety degrees and they went nowhere. Weapons whose own alignment
         // limit is tighter keep theirs; a seeker that must see the target at
         // launch (optical, laser) gets the tighter cone below.
+        // Missiles of ours allowed closing on one target at once
+        // (ShotDiscipline): an aircraft, and anything else -- 0 there is the
+        // game's own estimate of the hits it needs, at most four. A flight's
+        // own MissilesPerTarget, when set, overrides both.
+        public static int MissilesPerAirTarget = 2;
+        public static int MissilesPerSurfaceTarget = 0;
         public static float MaxLaunchAngle = 70f;           // radar, anti-radiation and heat-seeking missiles
         public static float MaxLaunchAngleOptical = 45f;    // optical and laser seekers: the target in the seeker's view
         public static float MaxLaunchAngleRocket = 15f;     // unguided rockets: pointed at it

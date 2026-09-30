@@ -607,6 +607,11 @@ namespace NOrders
             Host.Say((lead.Wing ?? lead.Name) + " · " + n + " aircraft airdropping along the line");
         }
 
+        public static void SetMissilesPerTarget(Flight flight, int missiles)
+        {
+            foreach (Flight member in Wings.Group(flight)) member.MissilesPerTarget = Mathf.Clamp(missiles, 0, 8);
+        }
+
         public static void SetConfined(Flight flight, bool confined)
         {
             foreach (Flight member in Wings.Group(flight)) FlightOrders.SetConfined(member, confined);

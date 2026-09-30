@@ -53,6 +53,7 @@ namespace NOrders
         public int StrikeStartAmmo = -1;
         public FlightMode PreviousMode = FlightMode.Orbit;
         public FlightRoe Roe = FlightRoe.Tight;
+        public int MissilesPerTarget;      // 0: the defaults in Tuning
         public int AmmoAtAttack = -1;       // total rounds when the run began
         public GlobalPosition CargoPoint;
         public bool Airdrop;

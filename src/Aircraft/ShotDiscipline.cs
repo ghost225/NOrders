@@ -90,7 +90,7 @@ namespace NOrders
                     __instance.currentWeaponStation = cheaper;
                     station = cheaper; info = cheaper.WeaponInfo;
                 }
-                int allowed = target is Aircraft ? 2 : Mathf.Clamp(Mathf.CeilToInt(info.CalcAttacksNeeded(target)), 1, 4);
+                int allowed = AllowedOn(flight, target, info);
                 int live = Closing(aircraft.NetworkHQ, target);
                 if (live < allowed)
                 {
@@ -115,6 +115,16 @@ namespace NOrders
                 return false;
             }
             catch (Exception ex) { Guard.Failed(Name, ex); return true; }
+        }
+
+        // How many of our missiles may be closing on this target at once: the
+        // flight's own choice, else the default for its kind of target.
+        internal static int AllowedOn(Flight flight, Unit target, WeaponInfo info)
+        {
+            if (flight != null && flight.MissilesPerTarget > 0) return flight.MissilesPerTarget;
+            if (target is Aircraft) return Mathf.Max(1, Tuning.MissilesPerAirTarget);
+            if (Tuning.MissilesPerSurfaceTarget > 0) return Tuning.MissilesPerSurfaceTarget;
+            return Mathf.Clamp(Mathf.CeilToInt(info.CalcAttacksNeeded(target)), 1, 4);
         }
 
         internal static int Overkills;
