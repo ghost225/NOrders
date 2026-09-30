@@ -11,6 +11,18 @@ namespace NOrders
     {
         public Unit Target;
         public string Weapon;
+        // A saturation attack: every round of the chosen weapons (WeaponInfo
+        // names; none chosen is every guided anti-surface weapon aboard), from
+        // every aircraft of the wing carrying them, at this one target -- and,
+        // Together, launched at once when the whole wing is in range.
+        public bool Saturate;
+        public bool Together = true;
+        public readonly HashSet<string> Weapons = new HashSet<string>();
+
+        // Whether this weapon is one the saturation fires.
+        public bool Fires(WeaponInfo info) =>
+            info != null && (info.missile || info.glideBomb) && !info.bomb &&
+            (Weapons.Count > 0 ? Weapons.Contains(info.name) : info.effectiveness.antiSurface > 0f || info.effectiveness.antiRadar > 0f);
     }
 
     // Strike planning: targets gathered first, the strike sent only when
@@ -90,6 +102,15 @@ namespace NOrders
                 }
             foreach (StrikeItem item in PlanOf(lead))
             {
+                if (item.Saturate)
+                {
+                    bool fired = false;
+                    foreach (Flight member in members)
+                        foreach (WeaponStation st in FlightOrders.ArmedStations(member.Aircraft))
+                            if (item.Fires(st.WeaponInfo) && left.ContainsKey(st.WeaponInfo.name) && left[st.WeaponInfo.name] > 0) { left[st.WeaponInfo.name] = 0; fired = true; }
+                    if (!fired) unreached?.Add(item);
+                    continue;
+                }
                 WeaponStation station = null;
                 Flight by = null;
                 foreach (Flight member in members) if ((station = StationFor(member, item)) != null) { by = member; break; }
@@ -139,6 +160,7 @@ namespace NOrders
                     if (Counted(station.WeaponInfo)) carried += station.Ammo;
             foreach (StrikeItem item in PlanOf(flight))
             {
+                if (item.Saturate) { foreach (int n in SaturationLoad(flight, item).Values) wanted += n; continue; }
                 Flight by = members.Count > 0 ? members[0] : flight;
                 WeaponStation station = null;
                 foreach (Flight member in members) if ((station = StationFor(member, item)) != null) { by = member; break; }
@@ -151,9 +173,106 @@ namespace NOrders
         internal static WeaponStation StationFor(Flight flight, StrikeItem item)
         {
             if (flight?.Aircraft == null || item?.Target == null) return null;
+            if (item.Saturate) return SaturationStation(flight.Aircraft, item);
             WeaponStation named = FlightOrders.NamedStation(flight.Aircraft, item.Weapon);
             if (named != null) return named;
             return string.IsNullOrEmpty(item.Weapon) ? FlightOrders.BestStationFor(flight.Aircraft, item.Target) : null;
+        }
+
+        // ---- saturation ---------------------------------------------------
+
+        // The saturation item this flight is working on the target, if any.
+        internal static StrikeItem SaturationOn(Flight flight, Unit target)
+        {
+            if (flight == null || target == null) return null;
+            foreach (StrikeItem item in flight.StrikeList) if (item.Saturate && item.Target == target) return item;
+            return null;
+        }
+
+        // Fired without the per-target limit: a saturation weapon at its target.
+        internal static bool Saturating(Flight flight, Unit target, WeaponInfo info)
+        {
+            StrikeItem item = SaturationOn(flight, target);
+            return item != null && item.Fires(info);
+        }
+
+        // The next of the chosen weapons to fire: rounds aboard, the longest
+        // reach first, so the whole salvo can go from the first launch point.
+        internal static WeaponStation SaturationStation(Aircraft aircraft, StrikeItem item)
+        {
+            WeaponStation best = null;
+            foreach (WeaponStation station in FlightOrders.ArmedStations(aircraft))
+            {
+                if (station.Ammo <= 0 || !item.Fires(station.WeaponInfo)) continue;
+                if (item.Weapons.Count == 0 && FlightOrders.BestStationFor(aircraft, item.Target) == null) continue;
+                if (best == null || station.WeaponInfo.targetRequirements.maxRange > best.WeaponInfo.targetRequirements.maxRange) best = station;
+            }
+            return best;
+        }
+
+        // Rounds of the chosen weapons still aboard.
+        internal static int SaturationRounds(Aircraft aircraft, StrikeItem item)
+        {
+            int rounds = 0;
+            foreach (WeaponStation station in FlightOrders.ArmedStations(aircraft))
+                if (item.Fires(station.WeaponInfo)) rounds += Mathf.Max(station.Ammo, 0);
+            return rounds;
+        }
+
+        // Rounds of the chosen weapons across the wing, by weapon (display name).
+        public static Dictionary<string, int> SaturationLoad(Flight flight, StrikeItem item)
+        {
+            var load = new Dictionary<string, int>();
+            foreach (Flight member in Wings.Group(Wings.LeadOf(flight) ?? flight))
+                foreach (WeaponStation station in FlightOrders.ArmedStations(member.Aircraft))
+                {
+                    if (station.Ammo <= 0 || !item.Fires(station.WeaponInfo)) continue;
+                    string name = station.WeaponInfo.weaponName ?? station.WeaponInfo.name;
+                    load.TryGetValue(name, out int n);
+                    load[name] = n + station.Ammo;
+                }
+            return load;
+        }
+
+        private sealed class Salvo
+        {
+            internal readonly Dictionary<Flight, float> InRange = new Dictionary<Flight, float>();
+            internal float FirstReady = -1f;
+            internal bool Released;
+        }
+        private static readonly Dictionary<StrikeItem, Salvo> salvos = new Dictionary<StrikeItem, Salvo>();
+        private const float HoldAtMost = 90f;
+
+        // In launch range on a Together saturation: hold until every aircraft
+        // of the wing on it is in range too (or HoldAtMost seconds after the
+        // first), then all fire. True while it must hold; says how many are in.
+        internal static bool HoldForWing(Flight flight, StrikeItem item, out string waiting)
+        {
+            waiting = null;
+            if (item == null || !item.Saturate || !item.Together) return false;
+            if (!salvos.TryGetValue(item, out Salvo salvo)) salvos[item] = salvo = new Salvo();
+            if (salvo.Released) return false;
+            float now = Time.timeSinceLevelLoad;
+            salvo.InRange[flight] = now;
+            if (salvo.FirstReady < 0f) salvo.FirstReady = now;
+            int on = 0, ready = 0;
+            foreach (Flight other in FlightOrders.All())
+            {
+                if (other?.Aircraft == null || other.Aircraft.disabled || !other.StrikeList.Contains(item)) continue;
+                if (other.Mode != FlightMode.Strike || other.Target != item.Target || SaturationRounds(other.Aircraft, item) <= 0) continue;
+                on++;
+                if (salvo.InRange.TryGetValue(other, out float at) && now - at < 3f) ready++;
+            }
+            if (ready >= on || now - salvo.FirstReady > HoldAtMost)
+            {
+                salvo.Released = true;
+                string line = "saturation on " + ShipNames.Of(item.Target) + " · " + (ready >= on ? "all " + on + " in range" : ready + " of " + on + " in range after " + HoldAtMost.ToString("0") + " s") + " · launch";
+                Host.LogInfo("[flight] " + (flight.Wing ?? flight.Name) + " · " + line);
+                Host.Say((flight.Wing ?? flight.Name) + " · " + line);
+                return false;
+            }
+            waiting = ready + " of " + on + " in range";
+            return true;
         }
 
         // ---- authorising: shared over the wing ---------------------------
@@ -183,6 +302,23 @@ namespace NOrders
             int skipped = 0;
             foreach (StrikeItem item in plan)
             {
+                // A saturation goes to every aircraft carrying its weapons,
+                // and takes all of those rounds.
+                if (item.Saturate)
+                {
+                    salvos.Remove(item);
+                    bool any = false;
+                    foreach (Flight member in members)
+                    {
+                        if (SaturationStation(member.Aircraft, item) == null) continue;
+                        lists[member].Add(item);
+                        any = true;
+                        foreach (WeaponStation carried in FlightOrders.ArmedStations(member.Aircraft))
+                            if (item.Fires(carried.WeaponInfo)) budget[member][carried.WeaponInfo.name] = 0;
+                    }
+                    if (!any) skipped++;
+                    continue;
+                }
                 Flight best = null;
                 int most = int.MinValue;
                 foreach (Flight member in members)
@@ -423,7 +559,8 @@ namespace NOrders
         private static void Spread(Aircraft aircraft, Unit primary, WeaponStation station, List<Unit> outTargets, ref int result)
         {
             Flight flight = aircraft != null ? FlightOrders.Of(aircraft) : null;
-            if (flight == null || flight.StrikeList.Count < 2 || station?.WeaponInfo == null || outTargets == null) return;
+            if (flight == null || station?.WeaponInfo == null || outTargets == null) return;
+            if (flight.StrikeList.Count < 2 && StrikePlans.SaturationOn(flight, primary) == null) return;
             WeaponInfo info = station.WeaponInfo;
             FactionHQ hq = aircraft.NetworkHQ;
             if (hq == null) return;
@@ -441,7 +578,7 @@ namespace NOrders
             {
                 Unit target = item.Target;
                 if (Host.Dead(target) || room <= 0) continue;
-                if (!string.IsNullOrEmpty(item.Weapon) && item.Weapon != info.name) continue;   // saved for its own weapon
+                if (item.Saturate ? !item.Fires(info) : !string.IsNullOrEmpty(item.Weapon) && item.Weapon != info.name) continue;   // saved for its own weapon
                 if (!hq.TryGetKnownPosition(target, out GlobalPosition known)) continue;
                 Vector3 to = known - aircraft.GlobalPosition();
                 if (reach > 0f && to.magnitude > reach) continue;

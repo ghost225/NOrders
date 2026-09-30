@@ -860,8 +860,19 @@ namespace NOrders
         {
             Unit target = flight.Target;
             FactionHQ hq = aircraft.NetworkHQ;
-            WeaponStation station = FlightOrders.NamedStation(aircraft, flight.PreferredWeapon) ??
-                (target != null ? FlightOrders.BestStationFor(aircraft, target) : null);
+            // A saturation: the chosen weapons one station after another, and
+            // nothing else. All of them away, the egress takes it (FlightOrders).
+            StrikeItem saturation = StrikePlans.SaturationOn(flight, target);
+            WeaponStation station = saturation != null ? StrikePlans.SaturationStation(aircraft, saturation)
+                : FlightOrders.NamedStation(aircraft, flight.PreferredWeapon) ??
+                  (target != null ? FlightOrders.BestStationFor(aircraft, target) : null);
+            if (saturation != null && station == null)
+            {
+                flight.SalvoLeft = 0;
+                flight.Doing("SATURATION AWAY");
+                Steer(aircraft.GlobalPosition() + Flat(aircraft.transform.forward).normalized * 5000f, default, 30f);
+                return;
+            }
             if (FlightOrders.IsAirTarget(target))
             {
                 if (Bvr(flight, station)) FlyBvr(pilot, target, station);
@@ -1106,7 +1117,9 @@ namespace NOrders
             flight.Doing("GLIDE RUN · " + UnitConverter.DistanceReading(Horizontal(known, aircraft.GlobalPosition())));
             Steer(known);
             if (!GlideReach(aircraft, info, known) || Time.timeSinceLevelLoad - flight.LastLaunchAt < 2f) return;
-            if (flight.SalvoLeft <= 0) flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
+            StrikeItem saturation = StrikePlans.SaturationOn(flight, target);
+            if (saturation != null) flight.SalvoLeft = Mathf.Max(StrikePlans.SaturationRounds(aircraft, saturation), 1);
+            else if (flight.SalvoLeft <= 0) flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
             aircraft.weaponManager.currentWeaponStation = station;
             List<Unit> targets = aircraft.weaponManager.GetTargetList();
             targets.Clear();
@@ -1122,6 +1135,8 @@ namespace NOrders
                 Tracing.Flight("[flight] " + flight.Name + " · glide bomb away · " + (info.weaponName ?? "bomb") + " at " +
                     (Horizontal(known, aircraft.GlobalPosition()) / 1000f).ToString("0.0") + " km from " + aircraft.radarAlt.ToString("0") + " m");
             }
+            // A saturation carries on with its next weapon; the egress follows the last.
+            if (saturation != null) { flight.SalvoLeft = StrikePlans.SaturationRounds(aircraft, saturation); return; }
             if (station.Ammo <= 0 || flight.SalvoLeft <= 0) CompleteRunIn(pilot, "glide bombs away");
         }
 
@@ -1140,6 +1155,23 @@ namespace NOrders
                 flight.InLaunchRangeSince = -1f;
                 Steer(known);                                  // at the ordered height: Steer holds it
                 return;
+            }
+            // A saturation fired together: in range, hold near the launch
+            // point until the rest of the wing is in range too.
+            StrikeItem saturation = StrikePlans.SaturationOn(flight, target);
+            if (saturation != null)
+            {
+                flight.SalvoLeft = Mathf.Max(StrikePlans.SaturationRounds(aircraft, saturation), 1);
+                if (StrikePlans.HoldForWing(flight, saturation, out string waiting))
+                {
+                    flight.InLaunchRangeSince = -1f;
+                    flight.Doing("HOLDING FOR THE WING · " + waiting);
+                    float radius = Mathf.Clamp(launch * 0.2f, 800f, 2500f);
+                    Vector3 back = here - known; back.y = 0f;
+                    if (back.sqrMagnitude < 1f) back = -aircraft.transform.forward;
+                    FlyOrbit(known + back.normalized * Mathf.Max(launch - radius - 300f, needs.minRange * 1.5f + radius), radius);
+                    return;
+                }
             }
             if (flight.InLaunchRangeSince < 0f) flight.InLaunchRangeSince = Time.timeSinceLevelLoad;
             if (Time.timeSinceLevelLoad - flight.InLaunchRangeSince > 60f) { CompleteRunIn(pilot, "no launch in a minute"); return; }
@@ -1163,8 +1195,10 @@ namespace NOrders
             Vector3 toTarget = known - here;
             float off = Vector3.Angle(aircraft.transform.forward, toTarget);
             float cone = needs.minAlignment > 0f ? needs.minAlignment : 30f;
-            if (off > cone * 0.9f || Time.timeSinceLevelLoad - flight.LastLaunchAt < 2.5f) return;
+            // A saturation goes as fast as the racks allow.
+            if (off > cone * 0.9f || Time.timeSinceLevelLoad - flight.LastLaunchAt < (saturation != null ? 0.6f : 2.5f)) return;
             if (aircraft.speed < needs.minOwnerSpeed) return;
+            if (saturation != null && (!station.Ready() || station.SalvoInProgress)) return;
 
             if (flight.SalvoLeft <= 0)
                 flight.SalvoLeft = Mathf.Clamp(Mathf.CeilToInt(info.CalcAttacksNeeded(target)), 1, Mathf.Max(station.Ammo, 1));
@@ -1186,6 +1220,7 @@ namespace NOrders
                     Mathf.Max(flight.SalvoLeft, 0) + " left in the salvo");
             }
             if (station.Ammo <= 0) flight.SalvoLeft = 0;
+            if (saturation != null) flight.SalvoLeft = StrikePlans.SaturationRounds(aircraft, saturation);
         }
 
         private void CompleteRunIn(Pilot pilot, string why)

@@ -75,7 +75,7 @@ namespace NOrders
                 // will do -- an Alkyon put anti-ship cruise missiles into a few
                 // tanks. The cheaper station is selected and the shot proceeds
                 // with it; with nothing else in range the shot is held.
-                if (!(target is Aircraft) && !(target is Ship) && Overkill(info, target))
+                if (!(target is Aircraft) && !(target is Ship) && Overkill(info, target) && !StrikePlans.Saturating(flight, target, info))
                 {
                     WeaponStation cheaper = CheaperStation(aircraft, __instance, target, info);
                     float at = Time.timeSinceLevelLoad;
@@ -121,6 +121,7 @@ namespace NOrders
         // flight's own choice, else the default for its kind of target.
         internal static int AllowedOn(Flight flight, Unit target, WeaponInfo info)
         {
+            if (StrikePlans.Saturating(flight, target, info)) return 99;     // everything chosen, at once
             if (flight != null && flight.MissilesPerTarget > 0) return flight.MissilesPerTarget;
             if (target is Aircraft) return Mathf.Max(1, Tuning.MissilesPerAirTarget);
             if (Tuning.MissilesPerSurfaceTarget > 0) return Tuning.MissilesPerSurfaceTarget;
