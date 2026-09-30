@@ -536,6 +536,7 @@ namespace NOrders
             Guard.Run("Handovers", Ownership.ServiceHandovers);
             Guard.Run("Cargo in one pass", CargoBurst.Tick);
             Guard.Run("Fixed-wing drops", FixedWingDrops.Forget);
+            Guard.Run("Ejection", EjectionCheck.Tick);
             for (int i = flights.Count - 1; i >= 0; i--)
                 if (flights[i].Aircraft == null || flights[i].Aircraft.disabled) flights.RemoveAt(i);
             foreach (Flight flight in flights)
@@ -1528,6 +1529,16 @@ namespace NOrders
 
         private static float nextThreatScan;
 
+        // Heat-seeking, as the game itself reads it (the seeker's type
+        // string, which its countermeasure stations match on), or by the
+        // seeker component when the string is not available yet.
+        public static bool IsHeatSeeker(Missile missile)
+        {
+            if (missile == null) return false;
+            try { if (missile.GetSeekerType() == "IR") return true; } catch { }
+            return missile.GetComponent<IRSeeker>() != null || missile.GetComponentInChildren<IRSeeker>(true) != null;
+        }
+
         private static void AssessThreats()
         {
             if (Time.unscaledTime < nextThreatScan) return;
@@ -1539,9 +1550,9 @@ namespace NOrders
                 if (aircraft == null || aircraft.disabled) continue;
                 FlightThreat threat = FlightThreat.None;
 
-                float nearestShot = float.PositiveInfinity;
+                float nearestShot = float.PositiveInfinity, nearestHeat = float.PositiveInfinity;
                 bool infrared = false;
-                Missile nearestMissile = null;
+                Missile nearestMissile = null, nearestHeatMissile = null;
 
                 foreach (Unit unit in UnitRegistry.allUnits)
                 {
@@ -1554,15 +1565,13 @@ namespace NOrders
                         if (missile.targetID != aircraft.persistentID) continue;
                         threat = FlightThreat.Missile;
                         float shotRange = FastMath.Distance(aircraft.GlobalPosition(), missile.GlobalPosition());
-                        if (shotRange < nearestShot)
-                        {
-                            nearestShot = shotRange;
-                            nearestMissile = missile;
-                            // Anything that is not clearly heat-seeking is
-                            // treated as radar guided, which hands over to
-                            // native evasion far earlier -- the safer mistake.
-                            infrared = missile.GetComponent<IRSeeker>() != null;
-                        }
+                        if (shotRange < nearestShot) { nearestShot = shotRange; nearestMissile = missile; }
+                        // A heat-seeker, by the game's own reading of the seeker
+                        // (the same string its countermeasure stations match
+                        // on): a component check alone read every shot as
+                        // radar, and an F-16 burned at full power with its
+                        // flares untouched.
+                        if (IsHeatSeeker(missile) && shotRange < nearestHeat) { nearestHeat = shotRange; nearestHeatMissile = missile; }
                         continue;
                     }
                     if (threat != FlightThreat.None) continue;
@@ -1579,6 +1588,13 @@ namespace NOrders
                     if (Host.AvoidEngaging(flight, unit)) continue;      // under their missiles: not worth it
                     threat = FlightThreat.Hostile;
                 }
+
+                // With shots of both kinds inbound the heat-seeker sets the
+                // defence once it is within twice the flaring range: flares and
+                // a cold engine cost a radar shot nothing, while full power
+                // with the burner lit feeds the heat-seeker.
+                if (nearestHeatMissile != null && (nearestHeatMissile == nearestMissile || nearestHeat <= Tuning.IrBurstRange * 2f))
+                { infrared = true; nearestMissile = nearestHeatMissile; nearestShot = nearestHeat; }
 
                 // Weapons tight fights back at whoever actually shot at us, which
                 // is exactly the missile case above.
@@ -1643,7 +1659,7 @@ namespace NOrders
             {
                 if (!(unit is Missile missile) || missile.disabled || missile.targetID != aircraft.persistentID) continue;
                 float range = Vector3.Distance(missile.transform.position, aircraft.transform.position);
-                if (missile.GetComponent<IRSeeker>() != null)
+                if (IsHeatSeeker(missile))
                 {
                     if (IrDefence.FlareFraction(aircraft) <= 0f) return false;
                     heat++;

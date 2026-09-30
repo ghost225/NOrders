@@ -20,6 +20,7 @@ namespace NOrders
         private const string Name = "Shot discipline";
         private static readonly Dictionary<(Aircraft, Unit), float> said = new Dictionary<(Aircraft, Unit), float>();
         private static readonly System.Reflection.FieldInfo AircraftOf = AccessTools.Field(typeof(WeaponManager), "aircraft");
+        internal static int OffNose;
 
         private static bool Prefix(WeaponManager __instance)
         {
@@ -40,6 +41,22 @@ namespace NOrders
                 Unit target = targets != null && targets.Count > 0 ? targets[0] : null;
                 if (target == null) return true;
                 if (Host.Dead(target)) return false;
+                // Off the nose: the launch waits until the aircraft has come
+                // round. The weapon's own alignment limit is kept when tighter.
+                float limit = Mathf.Min(Tuning.MaxLaunchAngle, info.targetRequirements.minAlignment > 0f ? info.targetRequirements.minAlignment : 180f);
+                Vector3 toTarget = target.transform.position - aircraft.transform.position;
+                float angle = toTarget.sqrMagnitude > 1f ? Vector3.Angle(aircraft.transform.forward, toTarget) : 0f;
+                if (angle > limit)
+                {
+                    float at = Time.timeSinceLevelLoad;
+                    if (!said.TryGetValue((aircraft, target), out float lastAngle) || at - lastAngle > 20f)
+                    {
+                        said[(aircraft, target)] = at;
+                        Tracing.Flight("[flight] " + (flight?.Name ?? aircraft.definition?.unitName ?? aircraft.name) + " · holding fire · " + ShipNames.Of(target) + " is " + angle.ToString("0") + "° off the nose (limit " + limit.ToString("0") + "°)");
+                    }
+                    OffNose++;
+                    return false;
+                }
                 int allowed = target is Aircraft ? 2 : Mathf.Clamp(Mathf.CeilToInt(info.CalcAttacksNeeded(target)), 1, 4);
                 int live = Closing(aircraft.NetworkHQ, target);
                 if (live < allowed)
