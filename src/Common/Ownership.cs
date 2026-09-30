@@ -21,7 +21,26 @@ namespace NOrders
             var marker = new GameObject(Prefix + Host.ModId);
             marker.transform.SetParent(unit.transform, false);
             marker.SetActive(false);                        // no cost, nothing to render
+            StripForeign(unit);
             return true;
+        }
+
+        // What another mod's copy of NOrders left on a unit it no longer owns
+        // -- its route, still setting the throttle to its last speed order --
+        // goes when this mod takes the unit on. Forty ships High Command had
+        // let go of sat still in a Naval Power task force for minutes while
+        // its leftover routes fought the new orders.
+        private static void StripForeign(Unit unit)
+        {
+            System.Reflection.Assembly ours = typeof(Ownership).Assembly;
+            foreach (MonoBehaviour behaviour in unit.GetComponents<MonoBehaviour>())
+            {
+                if (behaviour == null) continue;
+                System.Type type = behaviour.GetType();
+                if (type.Namespace != "NOrders" || type.Assembly == ours) continue;
+                Host.LogInfo("[own] removing " + type.Name + " another mod left on " + unit.name);
+                Object.Destroy(behaviour);
+            }
         }
 
         // Gives up this mod's claim; another mod's is left alone.

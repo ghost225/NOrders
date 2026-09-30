@@ -152,6 +152,17 @@ namespace NOrders
 
         internal GlobalPosition[] CopyWaypoints() => route.ToArray();
 
+        // A route is its mod's for as long as its mod owns the ship. Given up
+        // or taken by another mod, it stops steering and goes: left behind, it
+        // went on holding the ship to its last speed order against whoever
+        // commanded the ship next.
+        private bool StandDown()
+        {
+            if (ship == null || Ownership.Mine(ship)) return false;
+            Destroy(this);
+            return true;
+        }
+
         // A destination we did not send is a newer player order and supersedes
         // the queued route. Two things are not that, and must not clear it:
         // our own leg re-entering synchronously, and anything that re-issues
@@ -160,6 +171,7 @@ namespace NOrders
         private void OnNativeDestination(ref UnitCommand.Command command)
         {
             if (sendingOwnOrder) return;
+            if (StandDown()) return;
             if (hasSentLeg && Same(command.position, lastSent)) return;
 
             // Not a player's order -- the mission's scripting, the game's own
@@ -302,6 +314,7 @@ namespace NOrders
         private void Update()
         {
             if (ship == null || ship.disabled || !ship.IsServer || !ship.LocalSim) return;
+            if (StandDown()) return;
 
             float now = Time.timeSinceLevelLoad;
             if (now >= nextAuthorityCheck)
@@ -376,6 +389,7 @@ namespace NOrders
         private void LateUpdate()
         {
             if (ship == null || ship.disabled || !ship.IsServer || !ship.LocalSim) return;
+            if (StandDown()) return;
             if (OwnsNavigation) PinCommanded();
             bool capped = !float.IsPositiveInfinity(SpeedCapKnots);
             if ((!HasSpeedOrder && !capped) || ship.rb == null) return;
