@@ -40,8 +40,12 @@ namespace NOrders
                 if (aircraft.cockpit != null && aircraft.cockpit.IsDetached()) { why = "cockpit gone"; return true; }
                 if (aircraft.radarAlt > 40f)
                 {
+                    // Flying backward is tumbling for an aeroplane; a helicopter
+                    // backs up and slides sideways as a matter of course, and a
+                    // slow aeroplane in a hard turn can read backward for a frame.
                     Vector3 forward = aircraft.cockpit != null && aircraft.cockpit.xform != null ? aircraft.cockpit.xform.forward : aircraft.transform.forward;
-                    if (aircraft.rb.velocity.sqrMagnitude > 100f && Vector3.Dot(forward, aircraft.rb.velocity) < 0f) { why = "tumbling"; return true; }
+                    bool rotary = FlightOrders.IsRotary(FlightOrders.FirstPilot(aircraft));
+                    if (!rotary && aircraft.rb.velocity.sqrMagnitude > 900f && Vector3.Dot(forward.normalized, aircraft.rb.velocity.normalized) < -0.3f) { why = "tumbling"; return true; }
                     if (aircraft.partDamageTracker != null && aircraft.partDamageTracker.GetDetachedRatio() > 0.12f) { why = "airframe breaking up"; return true; }
                 }
                 if (aircraft.transform.position.y < Datum.LocalSeaY) { why = "in the water"; return true; }
