@@ -285,6 +285,8 @@ namespace NOrders
         public string Status =>
             Threat == FlightThreat.Missile ? (StandOn ? "DEFENDING" : "EVADING")
             : Interrupted ? "ENGAGING"
+            : Wings.FormingUp(this, out int waitingOn) ? "FORMING UP" + (waitingOn > 0 ? " · waiting for " + waitingOn : "")
+            : Wings.Joining(this, out float off) ? "JOINING · " + UnitConverter.DistanceReading(off)
             : null;
 
         public string Describe()

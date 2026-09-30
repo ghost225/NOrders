@@ -261,6 +261,31 @@ namespace NOrders
         // slot, until everyone is within 1.5 km -- never in a fight, and for
         // five minutes at most. The lead circles the spot it was at when the
         // hold began.
+        // For the status line: the lead holding for its wing, and how many it
+        // waits on (still to launch, or away from their slots).
+        internal static bool FormingUp(Flight lead, out int waitingOn)
+        {
+            waitingOn = 0;
+            if (lead?.Wing == null || !IsLead(lead) || !wings.TryGetValue(lead.Wing, out Record record) || !record.JoiningUp) return false;
+            waitingOn = LaunchQueue.QueuedInWing(lead.Wing) + FlightOrders.PendingInWing(lead.Wing);
+            foreach (Flight member in Members(lead.Wing))
+            {
+                if (member == lead || member.Mode != FlightMode.Formation || member.Aircraft == null) continue;
+                if (Slot(member, out GlobalPosition slot, out _, out _) && FastMath.Distance(slot, member.Aircraft.GlobalPosition()) > 1500f) waitingOn++;
+            }
+            return true;
+        }
+
+        // A wingman well off its slot, and by how far.
+        internal static bool Joining(Flight member, out float off)
+        {
+            off = 0f;
+            if (member?.Aircraft == null || member.Mode != FlightMode.Formation || !IsWingman(member)) return false;
+            if (!Slot(member, out GlobalPosition slot, out _, out _)) return false;
+            off = FastMath.Distance(slot, member.Aircraft.GlobalPosition());
+            return off > 800f;
+        }
+
         internal static bool JoinUp(Flight lead, out GlobalPosition point)
         {
             point = default;
