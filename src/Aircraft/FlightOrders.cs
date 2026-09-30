@@ -917,9 +917,41 @@ namespace NOrders
 
         // Still jamming through a strike or weapons free, and back to it after;
         // an order that sends the flight somewhere else ends it.
-        internal static bool KeepsJamming(FlightMode mode) =>
-            mode == FlightMode.Jam || mode == FlightMode.Strike || mode == FlightMode.Egress || mode == FlightMode.Engage;
+        // A jam list is worked alongside whatever else the flight is doing --
+        // a route, an area, a strike, a delivery -- until it is stopped or the
+        // flight goes home.
+        internal static bool KeepsJamming(FlightMode mode) => mode != FlightMode.ReturnToBase;
 
+        // Off the jamming station, list kept: the pods go on jamming from
+        // wherever the new task takes it.
+        internal static void LeaveJamStation(Flight flight)
+        {
+            if (flight == null) return;
+            if (flight.Mode == FlightMode.Jam) { flight.Mode = FlightMode.Orbit; flight.Adopted = false; }
+            if (flight.PreviousMode == FlightMode.Jam) flight.PreviousMode = FlightMode.Orbit;
+        }
+
+        // Jam this too, and change nothing else: onto the list, no move.
+        public static bool JamAlong(Flight flight, Unit target)
+        {
+            if (flight == null || target == null) return false;
+            flight.JamTargets.RemoveAll(u => u == null || u.disabled);
+            if (flight.JamTargets.Contains(target)) return true;
+            if (flight.JamTargets.Count >= JamCapacity(flight)) return false;
+            flight.JamTargets.Add(target);
+            if (flight.Mode == FlightMode.Jam) flight.Target = flight.JamTargets[0];
+            return true;
+        }
+
+        public static void Unjam(Flight flight, Unit target)
+        {
+            if (flight == null) return;
+            flight.JamTargets.Remove(target);
+            if (flight.JamTargets.Count == 0) { StopJamming(flight); return; }
+            if (flight.Mode == FlightMode.Jam) flight.Target = flight.JamTargets[0];
+        }
+
+        // Every jam order stops, and a jamming station is given up.
         public static void StopJamming(Flight flight)
         {
             if (flight == null) return;
@@ -931,7 +963,7 @@ namespace NOrders
         public static void SetRoute(Flight flight, GlobalPosition point, bool append)
         {
             if (flight == null) return;
-            StopJamming(flight);
+            LeaveJamStation(flight);
             if (!append) flight.Route.Clear();
             // A leg added to a flight working an area runs on from that area:
             // the area's centre is the route's first point. Starting over from
@@ -964,7 +996,6 @@ namespace NOrders
             // Jamming, an area moves where it jams from rather than ending it --
             // used if every target is in reach from all of it, moved if not.
             if (flight.Mode == FlightMode.Jam) return;
-            flight.JamTargets.Clear();
             flight.Mode = FlightMode.Orbit;
         }
 
@@ -986,7 +1017,7 @@ namespace NOrders
         public static void Station(Flight flight, Ship on = null)
         {
             if (flight == null || (flight.Home == null && on == null)) return;
-            StopJamming(flight);
+            LeaveJamStation(flight);
             flight.StationShip = on;
             flight.Route.Clear();
             // Abeam and slightly ahead: clear of the ship, still close aboard.
@@ -1125,9 +1156,14 @@ namespace NOrders
                 return true;
             }
             if (flight.Mode != FlightMode.Jam) flight.PreviousMode = flight.Mode;
-            flight.JamTargets.Clear();
-            flight.JamTargets.Add(target);
-            flight.Target = target;
+            // At standoff, for the whole list and this: the station is chosen to
+            // reach all of them. Full, this one takes the oldest one's place.
+            if (!flight.JamTargets.Contains(target))
+            {
+                if (flight.JamTargets.Count >= Mathf.Max(1, JamCapacity(flight))) flight.JamTargets.RemoveAt(0);
+                flight.JamTargets.Add(target);
+            }
+            flight.Target = flight.JamTargets[0];
             flight.Route.Clear();
             flight.Mode = FlightMode.Jam;
             flight.Adopted = false;                 // ours to fly, not the combat pilot's
@@ -1168,7 +1204,7 @@ namespace NOrders
             if (FixedWingDrops.CanAirdrop(flight.Aircraft)) airdrop = true;
             // A drop along a line keeps its line; any other delivery has none.
             if (!deliveringAlong) { flight.HasDropLine = false; flight.LeadInPending = false; }
-            StopJamming(flight);
+            LeaveJamStation(flight);
             if (flight.Mode != FlightMode.Cargo) flight.PreviousMode = flight.Mode;
             flight.CargoPoint = where;
             flight.Airdrop = airdrop;
@@ -1206,7 +1242,7 @@ namespace NOrders
             flight.DropSpacing = items > 1 ? length / (items - 1) : 0f;
             flight.LeadIn = start - dir * (plane ? 6000f : 1500f);
             flight.LeadInPending = true;
-            StopJamming(flight);
+            LeaveJamStation(flight);
             if (flight.Mode != FlightMode.Cargo && flight.Mode != FlightMode.Route) flight.PreviousMode = flight.Mode;
             flight.Route.Clear();
             flight.Route.Add(flight.LeadIn);

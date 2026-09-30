@@ -523,6 +523,10 @@ namespace NOrders
 
         public static void Station(Flight flight, Ship on = null) => FlightOrders.Station(Led(flight), on);
 
+        // Onto this aircraft's own list, task unchanged: each aircraft has its
+        // own pods, so this is per aircraft, not the wing's.
+        public static bool JamAlong(Flight flight, Unit target) => FlightOrders.JamAlong(flight, target);
+
         public static bool Jam(Flight flight, Unit target, bool add = false) =>
             add ? FlightOrders.Jam(Wings.LeadOf(flight), target, true) : FlightOrders.Jam(Led(flight), target);
 
