@@ -27,6 +27,7 @@ namespace NOrders
         private const float Settle = 5f;            // seconds at rest before recovery
 
         private static readonly Dictionary<Aircraft, float> restingSince = new Dictionary<Aircraft, float>();
+        private static readonly System.Reflection.FieldInfo ToRunway = HarmonyLib.AccessTools.Field(typeof(AIPilotTaxiState), "toRunway");
         private static float nextSweep;
 
         internal static void Tick()
@@ -47,6 +48,12 @@ namespace NOrders
                 bool landedStates = state == null || state is AIPilotLandingState || state is AIPilotTaxiState ||
                                     state is PilotParkedState || state is AIHeloLandingState;
                 if (!landedStates) continue;
+                // Back from a flight, not waiting to start one: an aircraft
+                // just brought up, sitting still on the deck for its takeoff
+                // clearance, was taken for one that had landed and recovered
+                // before it ever flew -- one of a wing of four off an Annex.
+                if (pilot == null || !pilot.flightInfo.HasTakenOff) continue;
+                if (state is AIPilotTaxiState taxi && ToRunway != null && (bool)ToRunway.GetValue(taxi)) continue;
                 if (!OnMovingDeck(aircraft, out Ship ship)) continue;
                 seen.Add(aircraft);
                 if (!restingSince.TryGetValue(aircraft, out float since)) { restingSince[aircraft] = Time.timeSinceLevelLoad; continue; }
