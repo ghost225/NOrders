@@ -21,7 +21,7 @@ namespace NOrders
     // owner does it, or the steward for ships no mod owns.
     internal static class MovingDeckRecovery
     {
-        private const float ShipMoving = 1.5f;      // m/s: below this the game's own check works
+        private const float ShipMoving = 0.8f;      // m/s: the game's own check wants under 1 m/s over the ground
         private const float AtRest = 1.2f;          // m/s relative to the deck
         private const float OverDeck = 15f;         // metres above the deck's centre
         private const float Settle = 5f;            // seconds at rest before recovery

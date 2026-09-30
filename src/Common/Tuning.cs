@@ -26,6 +26,10 @@ namespace NOrders
         public static float LowFuelAlert = 25f;
         public static float BombingHeight = 1500f;
         public static float CruiseThrottle = 0.8f;
+        // A flight's default for home at a land airfield: rearm and go back
+        // out (Turnaround), or park. Decks always park.
+        public static bool RearmAtAirfields = false;
+        public static float TurnaroundSeconds = 60f;
         // A missile is not launched more than this far off the nose, whatever
         // its definition allows: an A-19 put optical-homing AGM-48s out at
         // ninety degrees and they went nowhere. Weapons whose own alignment

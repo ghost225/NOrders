@@ -641,6 +641,11 @@ namespace NOrders
             foreach (Flight member in Wings.Group(flight)) member.MissilesPerTarget = Mathf.Clamp(missiles, 0, 8);
         }
 
+        public static void SetRearmAtHome(Flight flight, bool rearm)
+        {
+            foreach (Flight member in Wings.Group(flight)) member.RearmAtHome = rearm;
+        }
+
         public static void SetConfined(Flight flight, bool confined)
         {
             foreach (Flight member in Wings.Group(flight)) FlightOrders.SetConfined(member, confined);

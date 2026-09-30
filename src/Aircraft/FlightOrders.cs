@@ -53,6 +53,14 @@ namespace NOrders
         public int StrikeStartAmmo = -1;
         public FlightMode PreviousMode = FlightMode.Orbit;
         public FlightRoe Roe = FlightRoe.Tight;
+        // Home at a land airfield: rearm, refuel and go back out to the task
+        // (Turnaround), rather than park and stand down. Decks always park.
+        public bool RearmAtHome = Tuning.RearmAtAirfields;
+        // The task it had when it was sent home, to go back to after a turnaround.
+        internal FlightMode? ResumeMode;
+        internal GlobalPosition ResumeCentre;
+        internal float ResumeRadius;
+        internal readonly List<GlobalPosition> ResumeRoute = new List<GlobalPosition>();
         public int MissilesPerTarget;      // 0: the defaults in Tuning
         // Targets gathered for a strike not yet authorised (the lead's), and
         // the list this aircraft is working down once it is.
@@ -621,6 +629,7 @@ namespace NOrders
             Guard.Run("Cargo in one pass", CargoBurst.Tick);
             Guard.Run("Fixed-wing drops", FixedWingDrops.Forget);
             Guard.Run("Ejection", EjectionCheck.Tick);
+            Guard.Run("Turnaround", Turnaround.Tick);
             for (int i = flights.Count - 1; i >= 0; i--)
                 if (flights[i].Aircraft == null || flights[i].Aircraft.disabled) flights.RemoveAt(i);
             foreach (Flight flight in flights)
@@ -1851,6 +1860,7 @@ namespace NOrders
         {
             if (flight == null) return;
             StrikePlans.Cancel(flight);
+            Remember(flight);
             flight.JamTargets.Clear();
             // Round the missiles first, if the host mod knows a way.
             if (flight.HomingVia == null && flight.Aircraft != null && !flight.Aircraft.disabled)
@@ -1867,6 +1877,49 @@ namespace NOrders
             }
             flight.HomingVia = null;
             flight.Mode = FlightMode.ReturnToBase;
+        }
+
+        // The task in hand as it is sent home, for a turnaround to go back to.
+        // Only the first time: the dogleg home is itself a route.
+        private static void Remember(Flight flight)
+        {
+            if (flight.Mode == FlightMode.ReturnToBase || flight.HomingVia.HasValue) return;
+            flight.ResumeMode = flight.Mode;
+            flight.ResumeCentre = flight.OrbitCentre;
+            flight.ResumeRadius = flight.OrbitRadius;
+            flight.ResumeRoute.Clear();
+            flight.ResumeRoute.AddRange(flight.Route);
+        }
+
+        // Back out after a turnaround: to the task it had when sent home, or
+        // the one given while it was on the ground. A strike, a jamming run
+        // or a delivery is not picked up again -- the target may be gone, the
+        // cargo is -- so it goes back to that task's area. Returns what it is
+        // going to, for the log.
+        internal static string Resume(Flight flight)
+        {
+            if (flight.Mode != FlightMode.ReturnToBase) { flight.ResumeMode = null; return Describe(flight); }
+            FlightMode mode = flight.ResumeMode ?? FlightMode.Orbit;
+            flight.ResumeMode = null;
+            flight.OrbitCentre = flight.ResumeCentre;
+            if (flight.ResumeRadius > 0f) flight.OrbitRadius = flight.ResumeRadius;
+            flight.Route.Clear();
+            switch (mode)
+            {
+                case FlightMode.Route:
+                    flight.Route.AddRange(flight.ResumeRoute);
+                    flight.Mode = flight.Route.Count > 0 ? FlightMode.Route : FlightMode.Orbit;
+                    break;
+                case FlightMode.Engage:
+                case FlightMode.Station:
+                case FlightMode.Formation:
+                    flight.Mode = mode;
+                    break;
+                default:
+                    flight.Mode = FlightMode.Orbit;
+                    break;
+            }
+            return Describe(flight);
         }
 
         // Recovering now, rather than when the fuel says so. The landing state

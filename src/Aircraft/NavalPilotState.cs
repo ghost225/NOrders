@@ -48,7 +48,7 @@ namespace NOrders
         }
 
         private AircraftParameters parameters;
-        private float recoveringSince = -1f;
+        private float recoveringSince = -1f, recoveredAt = -100f;
 
         // The native combat and landing states never touch the throttle -- an
         // AI jet cruises flat out -- so whatever formation keeping left it at
@@ -113,6 +113,14 @@ namespace NOrders
             if (aircraft.radarAlt < 3f && aircraft.speed < 10f)
             {
                 if (groundedSince < 0f) groundedSince = Time.timeSinceLevelLoad;
+                else if (Time.timeSinceLevelLoad - groundedSince > 8f && flight.Mode == FlightMode.ReturnToBase)
+                {
+                    // Down on the way home: finish the landing the game's way
+                    // -- park, or turn round at an airfield -- never a takeoff.
+                    groundedSince = -1f;
+                    HandBackToLanding(pilot);
+                    return;
+                }
                 else if (Time.timeSinceLevelLoad - groundedSince > 8f)
                 {
                     PilotBaseState takeoff = FlightOrders.IsRotary(pilot) ? (PilotBaseState)pilot.AIHeloTakeoffState : pilot.AITaxiState;
@@ -156,7 +164,12 @@ namespace NOrders
             if (aircraft.autopilot is AutopilotPlane)
             {
                 float corner = parameters != null ? parameters.cornerSpeed : 0f;
-                bool slow = corner > 0f && aircraft.speed < corner * 1.05f;
+                // Just out of a recovery, back in only below corner speed
+                // itself: cruising at the threshold, a jet flickered in and
+                // out every second at 189 m/s. (A higher exit bar instead
+                // could leave one that cruises below it recovering for ever.)
+                bool justOut = recoveringSince < 0f && Time.timeSinceLevelLoad - recoveredAt < 20f;
+                bool slow = corner > 0f && aircraft.speed < corner * (justOut ? 0.97f : 1.05f);
                 bool low = aircraft.radarAlt < 150f && flight.Mode != FlightMode.Egress && flight.Mode != FlightMode.Strike;
                 if ((slow || low) && !flight.EvadingInfrared)
                 {
@@ -174,6 +187,7 @@ namespace NOrders
                     return;
                 }
             }
+            if (recoveringSince >= 0f) recoveredAt = Time.timeSinceLevelLoad;
             recoveringSince = -1f;
 
             // A heat-seeker inbound: afterburner out (above), the shot on the
