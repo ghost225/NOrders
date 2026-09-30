@@ -161,27 +161,37 @@ namespace NOrders
             // On a strike the height is the run's business, but a stall is
             // nobody's: a loaded fighter fell into the sea at 74 m/s straight
             // after its stand-off launch.
-            if (aircraft.autopilot is AutopilotPlane)
+            // Slow is judged against what the airframe can do, not a fighter's
+            // numbers: corner speed alone kept a prop Cricket, flat out at
+            // 88 m/s, in recovery for ever. The bar is the lowest of corner
+            // speed, half again its takeoff speed (the stall margin that
+            // matters), and 60% of its top speed. Not on the way home: the
+            // landing state flies a slow aircraft down itself, and recovery
+            // had blocked the RTB order outright.
+            if (aircraft.autopilot is AutopilotPlane && flight.Mode != FlightMode.ReturnToBase)
             {
-                float corner = parameters != null ? parameters.cornerSpeed : 0f;
-                // Just out of a recovery, back in only below corner speed
-                // itself: cruising at the threshold, a jet flickered in and
-                // out every second at 189 m/s. (A higher exit bar instead
-                // could leave one that cruises below it recovering for ever.)
+                float bar = SlowBar();
                 bool justOut = recoveringSince < 0f && Time.timeSinceLevelLoad - recoveredAt < 20f;
-                bool slow = corner > 0f && aircraft.speed < corner * (justOut ? 0.97f : 1.05f);
+                bool slow = bar > 0f && aircraft.speed < bar * (justOut ? 0.93f : 1f);
                 bool low = aircraft.radarAlt < 150f && flight.Mode != FlightMode.Egress && flight.Mode != FlightMode.Strike;
                 if ((slow || low) && !flight.EvadingInfrared)
                 {
                     controlInputs.throttle = 1f;
                     Reheat();
-                    Vector3 ahead = Flat(aircraft.transform.forward);
+                    // Straight on along the way it is actually going: a point
+                    // ahead of the nose, with a slow prop crabbing, pulled the
+                    // velocity after the nose and flew it round in circles.
+                    Vector3 ahead = aircraft.speed > 5f ? Flat(aircraft.rb.velocity) : Flat(aircraft.transform.forward);
                     if (ahead.sqrMagnitude < 0.01f) ahead = Vector3.forward;
                     float ordered = flight.Altitude;
-                    // Climb no more than 300 m above where it is: speed comes first.
-                    flight.Altitude = Mathf.Clamp(aircraft.radarAlt + 300f, MinimumClearance, Mathf.Max(ordered, MinimumClearance));
+                    // Low: climb, but no more than 300 m above where it is.
+                    // Slow but high enough: ease down, trading height for speed
+                    // -- climbing bled it further.
+                    flight.Altitude = low
+                        ? Mathf.Clamp(aircraft.radarAlt + 300f, MinimumClearance, Mathf.Max(ordered, MinimumClearance))
+                        : Mathf.Max(aircraft.radarAlt - 150f, MinimumClearance);
                     flight.Doing("RECOVERING ENERGY");
-                    if (recoveringSince < 0f) { recoveringSince = Time.timeSinceLevelLoad; Tracing.Flight("[flight] " + flight.Name + " · recovering energy · " + aircraft.speed.ToString("0") + " m/s at " + aircraft.radarAlt.ToString("0") + " m"); }
+                    if (recoveringSince < 0f) { recoveringSince = Time.timeSinceLevelLoad; Tracing.Flight("[flight] " + flight.Name + " · recovering energy · " + aircraft.speed.ToString("0") + " m/s (bar " + bar.ToString("0") + ") at " + aircraft.radarAlt.ToString("0") + " m"); }
                     Steer(aircraft.GlobalPosition() + ahead.normalized * 5000f, default, 30f);
                     flight.Altitude = ordered;
                     return;
@@ -795,6 +805,18 @@ namespace NOrders
 
         // Only these autopilots actually implement an AutoAim; anything else
         // would be flown by a method with an empty body.
+        // The speed below which a fixed-wing aircraft of ours is too slow to
+        // fly its orders: see the energy recovery. 0 when nothing is known.
+        private float SlowBar()
+        {
+            if (parameters == null) return 0f;
+            float bar = float.PositiveInfinity;
+            if (parameters.cornerSpeed > 0f) bar = Mathf.Min(bar, parameters.cornerSpeed * 1.05f);
+            if (parameters.takeoffSpeed > 0f) bar = Mathf.Min(bar, parameters.takeoffSpeed * 1.5f);
+            if (parameters.maxSpeed > 0f) bar = Mathf.Min(bar, parameters.maxSpeed * 0.6f);
+            return float.IsInfinity(bar) ? 0f : bar;
+        }
+
         internal static bool CanBeFlown(Aircraft aircraft) =>
             aircraft != null && (aircraft.autopilot is AutopilotPlane
                 || aircraft.autopilot is AutopilotHelo
