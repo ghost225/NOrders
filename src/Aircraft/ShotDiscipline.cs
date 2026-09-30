@@ -42,8 +42,13 @@ namespace NOrders
                 if (target == null) return true;
                 if (Host.Dead(target)) return false;
                 // Off the nose: the launch waits until the aircraft has come
-                // round. The weapon's own alignment limit is kept when tighter.
-                float limit = Mathf.Min(Tuning.MaxLaunchAngle, info.targetRequirements.minAlignment > 0f ? info.targetRequirements.minAlignment : 180f);
+                // round. The cone is the seeker's -- an optical or laser
+                // seeker must see the target at launch, a heat-seeker nearly
+                // so, a radar or anti-radiation seeker is steered onto it --
+                // and the weapon's own alignment limit is kept when tighter.
+                string guidance = Guidance(info);
+                float cone = guidance == "Optical" || guidance == "Laser" ? Tuning.MaxLaunchAngleOptical : guidance == "IR" ? Tuning.MaxLaunchAngleInfrared : Tuning.MaxLaunchAngle;
+                float limit = Mathf.Min(cone, info.targetRequirements.minAlignment > 0f ? info.targetRequirements.minAlignment : 180f);
                 Vector3 toTarget = target.transform.position - aircraft.transform.position;
                 float angle = toTarget.sqrMagnitude > 1f ? Vector3.Angle(aircraft.transform.forward, toTarget) : 0f;
                 if (angle > limit)
@@ -52,7 +57,7 @@ namespace NOrders
                     if (!said.TryGetValue((aircraft, target), out float lastAngle) || at - lastAngle > 20f)
                     {
                         said[(aircraft, target)] = at;
-                        Tracing.Flight("[flight] " + (flight?.Name ?? aircraft.definition?.unitName ?? aircraft.name) + " · holding fire · " + ShipNames.Of(target) + " is " + angle.ToString("0") + "° off the nose (limit " + limit.ToString("0") + "°)");
+                        Tracing.Flight("[flight] " + (flight?.Name ?? aircraft.definition?.unitName ?? aircraft.name) + " · holding fire · " + ShipNames.Of(target) + " is " + angle.ToString("0") + "° off the nose (" + (info.weaponName ?? "missile") + ", " + (guidance.Length > 0 ? guidance : "unknown") + " seeker, limit " + limit.ToString("0") + "°)");
                     }
                     OffNose++;
                     return false;
@@ -82,6 +87,25 @@ namespace NOrders
                 return false;
             }
             catch (Exception ex) { Guard.Failed(Name, ex); return true; }
+        }
+
+        // How a weapon's missile finds its target, from the seeker on its
+        // prefab, as the game names it: "IR", "ARH" (active radar), "ARAD"
+        // (anti-radiation), "Optical", "Laser", or empty when it has none.
+        private static readonly Dictionary<WeaponInfo, string> guidanceOf = new Dictionary<WeaponInfo, string>();
+        public static string Guidance(WeaponInfo info)
+        {
+            if (info == null) return "";
+            if (guidanceOf.TryGetValue(info, out string known)) return known;
+            string type = "";
+            try
+            {
+                MissileSeeker seeker = info.weaponPrefab != null ? info.weaponPrefab.GetComponent<MissileSeeker>() ?? info.weaponPrefab.GetComponentInChildren<MissileSeeker>(true) : null;
+                if (seeker != null) type = seeker.GetSeekerType() ?? "";
+            }
+            catch { }
+            guidanceOf[info] = type;
+            return type;
         }
 
         // Our side's missiles still on their way to this target: any live

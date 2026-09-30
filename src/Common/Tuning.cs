@@ -27,10 +27,13 @@ namespace NOrders
         public static float BombingHeight = 1500f;
         public static float CruiseThrottle = 0.8f;
         // A missile is not launched more than this far off the nose, whatever
-        // its definition allows: an A-19 put anti-radiation missiles out at
+        // its definition allows: an A-19 put optical-homing AGM-48s out at
         // ninety degrees and they went nowhere. Weapons whose own alignment
-        // limit is tighter keep theirs.
+        // limit is tighter keep theirs; a seeker that must see the target at
+        // launch (optical, laser) gets the tighter cone below.
         public static float MaxLaunchAngle = 70f;
+        public static float MaxLaunchAngleOptical = 30f;
+        public static float MaxLaunchAngleInfrared = 60f;
         public static float IrBurstRange = 3000f;
         public static int IrBurstFlares = 4;
         public static float IrBurstPause = 1.5f;      // between strings while the shot keeps coming
