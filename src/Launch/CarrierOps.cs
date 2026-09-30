@@ -220,8 +220,29 @@ namespace NOrders
             return WeaponChecker.MountAllowedNuclear(mount, sets[station.Index], deck, player, deck?.CurrentHQ);
         }
 
+        // Set when the last Launch failed only because no hangar would take
+        // the aircraft at that moment -- worth trying again, not giving up on.
+        internal static bool LastRefusalWasBusy;
+
+        // Any hangar free for this airframe that is not marked to refuse AI
+        // spawns (Aryx's FS-41 carriers mark their parking hangars so, and
+        // build AI aircraft on their lifts only).
+        private static bool AiHangarFree(Airbase deck, AircraftDefinition definition)
+        {
+            foreach (Hangar hangar in deck.hangars)
+            {
+                if (hangar == null || hangar.Disabled || !hangar.CanSpawnAircraft(definition)) continue;
+                bool refuses = false;
+                foreach (MonoBehaviour behaviour in hangar.GetComponents<MonoBehaviour>())
+                    if (behaviour != null && behaviour.GetType().Name.IndexOf("PreventHangarAISpawn", System.StringComparison.Ordinal) >= 0) { refuses = true; break; }
+                if (!refuses) return true;
+            }
+            return false;
+        }
+
         public static bool Launch(Airbase deck, LoadoutPlan plan, string callsign, string wing, out string reason)
         {
+            LastRefusalWasBusy = false;
             if (deck == null || deck.disabled) { reason = "No flight deck or field."; return false; }
             Ship ship = Airfields.ShipOf(deck);
             if (ship != null ? !CommandableShip.CanCommand(ship, out reason) : !Airfields.CanCommand(deck, out reason))
@@ -237,6 +258,11 @@ namespace NOrders
 
             if (!deck.CanSpawnAircraft(plan.Definition))
             { reason = "The deck cannot launch that airframe right now."; return false; }
+            // A hangar that would take an AI aircraft now, before anything is
+            // paid: otherwise each wait for a lift paid and refunded the
+            // airframe twice a second.
+            if (!AiHangarFree(deck, plan.Definition))
+            { LastRefusalWasBusy = true; reason = "No hangar would take it just now."; return false; }
 
             foreach (LoadoutStation station in plan.Stations)
                 if (!NuclearAllowed(plan, station, station.Selected, deck))
@@ -292,7 +318,12 @@ namespace NOrders
                 if (payer != null) payer.AddAllocation(price);
                 if (stocked || purchased) hq.ModifyUnitSupply(plan.Definition, -1);
                 if (purchased) hq.AddFunds(price);
-                reason = "The deck rejected the launch.";
+                // Every hangar said it could, and none would. A mod carrier's
+                // parking hangars can refuse AI spawns while its lifts are
+                // busy -- the Penumbra builds on its lifts only -- and the game
+                // still counts them as able to. Busy, not impossible.
+                LastRefusalWasBusy = true;
+                reason = "No hangar would take it just now.";
                 return false;
             }
 

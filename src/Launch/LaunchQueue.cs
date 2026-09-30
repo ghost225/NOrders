@@ -26,6 +26,7 @@ namespace NOrders
             internal string Callsign;       // this aircraft's: "Viper 1-2"
             internal string Wing;           // the wing's: "Viper 1"; null for a single
             internal float QueuedAt;
+            internal bool NotedBusy;
         }
 
         private static readonly List<Entry> queue = new List<Entry>();
@@ -112,6 +113,16 @@ namespace NOrders
                     queue.RemoveAt(i);
                     i--;
                     Host.Say(reason);
+                }
+                // Refused only because nothing would take it this moment: wait
+                // for a lift or hangar, as for one the game says is busy.
+                else if (CarrierOps.LastRefusalWasBusy)
+                {
+                    if (!entry.NotedBusy)
+                    {
+                        entry.NotedBusy = true;
+                        Tracing.Deck("[deck] " + entry.Callsign + " · no hangar would take it yet, waiting");
+                    }
                 }
                 else { DropFrom(i, entry, reason); i--; }
             }
