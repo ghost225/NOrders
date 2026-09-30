@@ -53,20 +53,96 @@ namespace NOrders
         public static void Remove(Flight flight, StrikeItem item) => PlanOf(flight).Remove(item);
         public static void Clear(Flight flight) => PlanOf(flight).Clear();
 
-        // How many missiles the plan wants against what the wing carries --
-        // missiles only; bombs, rockets and guns are one pass per target.
+        // Weapons fired by the salvo -- missiles and glide bombs -- go at a
+        // number of rounds per target (ShotDisciplinePatch.AllowedOn, which
+        // the flight's own per-target setting overrides); anything else is a
+        // pass per target and its rounds are not counted.
+        internal static bool Counted(WeaponInfo info) => info != null && (info.missile || info.glideBomb);
+
+        internal static int RoundsFor(Flight flight, StrikeItem item, WeaponInfo info) =>
+            Counted(info) ? ShotDisciplinePatch.AllowedOn(flight, item.Target, info) : 1;
+
+        // Where the plan outruns the wing's racks, weapon by weapon.
+        public sealed class Shortfall
+        {
+            public string Weapon;           // display name
+            public int PerTarget, Wanted, Carried, Targets, Reached;
+        }
+
+        // The plan checked against what the wing carries: in list order, each
+        // target takes its rounds of the weapon it would be attacked with;
+        // once that weapon is spent, the targets after it are not reached.
+        // Returns the shortfalls and fills the items that would go unattacked.
+        public static List<Shortfall> Check(Flight flight, HashSet<StrikeItem> unreached = null)
+        {
+            var result = new List<Shortfall>();
+            Flight lead = Wings.LeadOf(flight) ?? flight;
+            List<Flight> members = Wings.Group(lead);
+            if (members.Count == 0 && lead != null) members.Add(lead);
+            var left = new Dictionary<string, int>();
+            var byWeapon = new Dictionary<string, Shortfall>();
+            foreach (Flight member in members)
+                foreach (WeaponStation station in FlightOrders.ArmedStations(member.Aircraft))
+                {
+                    if (!Counted(station.WeaponInfo)) continue;
+                    left.TryGetValue(station.WeaponInfo.name, out int n);
+                    left[station.WeaponInfo.name] = n + station.Ammo;
+                }
+            foreach (StrikeItem item in PlanOf(lead))
+            {
+                WeaponStation station = null;
+                Flight by = null;
+                foreach (Flight member in members) if ((station = StationFor(member, item)) != null) { by = member; break; }
+                if (station == null || !Counted(station.WeaponInfo)) continue;
+                string key = station.WeaponInfo.name;
+                if (!byWeapon.TryGetValue(key, out Shortfall f))
+                {
+                    left.TryGetValue(key, out int carried);
+                    byWeapon[key] = f = new Shortfall { Weapon = station.WeaponInfo.weaponName ?? key, Carried = carried };
+                }
+                int per = RoundsFor(by, item, station.WeaponInfo);
+                f.PerTarget = Mathf.Max(f.PerTarget, per);
+                f.Wanted += per;
+                f.Targets++;
+                left.TryGetValue(key, out int remaining);
+                if (remaining > 0) { f.Reached++; left[key] = remaining - per; }
+                else unreached?.Add(item);
+            }
+            foreach (Shortfall f in byWeapon.Values) if (f.Wanted > f.Carried) result.Add(f);
+            return result;
+        }
+
+        // One line for a shortfall: "GBM-500LR: 2 a target wants 8, the wing carries 4 · 2 of 4 targets reached".
+        public static string Describe(Shortfall f) =>
+            f.Weapon + ": " + f.PerTarget + " a target wants " + f.Wanted + ", the wing carries " + f.Carried +
+            " · " + f.Reached + " of " + f.Targets + " target(s) reached";
+
+        // Would one round a target cover every target? For the offer to drop
+        // the per-target setting to 1.
+        public static bool OneEachFits(Flight flight)
+        {
+            Flight lead = Wings.LeadOf(flight) ?? flight;
+            List<Shortfall> now = Check(lead);
+            if (now.Count == 0) return false;
+            foreach (Shortfall f in now) if (f.Targets > f.Carried) return false;
+            return true;
+        }
+
+        // How many rounds of salvo weapons the plan wants against what the
+        // wing carries of them.
         public static void Needs(Flight flight, out int wanted, out int carried)
         {
             wanted = 0; carried = 0;
             var members = Wings.Group(Wings.LeadOf(flight) ?? flight);
             foreach (Flight member in members)
                 foreach (WeaponStation station in FlightOrders.ArmedStations(member.Aircraft))
-                    if (station.WeaponInfo.missile) carried += station.Ammo;
+                    if (Counted(station.WeaponInfo)) carried += station.Ammo;
             foreach (StrikeItem item in PlanOf(flight))
             {
-                WeaponStation station = StationFor(members.Count > 0 ? members[0] : flight, item);
-                if (station != null && station.WeaponInfo.missile)
-                    wanted += ShotDisciplinePatch.AllowedOn(members.Count > 0 ? members[0] : flight, item.Target, station.WeaponInfo);
+                Flight by = members.Count > 0 ? members[0] : flight;
+                WeaponStation station = null;
+                foreach (Flight member in members) if ((station = StationFor(member, item)) != null) { by = member; break; }
+                if (station != null && Counted(station.WeaponInfo)) wanted += RoundsFor(by, item, station.WeaponInfo);
             }
         }
 
@@ -89,14 +165,21 @@ namespace NOrders
             if (plan.Count == 0) return (lead?.Name ?? "Flight") + " · no targets planned";
             List<Flight> members = Wings.Group(lead);
             var lists = new Dictionary<Flight, List<StrikeItem>>();
-            var budget = new Dictionary<Flight, int>();
+            // Rounds of each salvo weapon each aircraft has left to give; a
+            // target goes to whoever has the most of the weapon it needs.
+            var budget = new Dictionary<Flight, Dictionary<string, int>>();
             foreach (Flight member in members)
             {
                 lists[member] = new List<StrikeItem>();
-                int rounds = 0;
-                foreach (WeaponStation station in FlightOrders.ArmedStations(member.Aircraft)) rounds += station.WeaponInfo.missile ? station.Ammo : 2;
+                var rounds = new Dictionary<string, int>();
+                foreach (WeaponStation station in FlightOrders.ArmedStations(member.Aircraft))
+                {
+                    rounds.TryGetValue(station.WeaponInfo.name, out int n);
+                    rounds[station.WeaponInfo.name] = n + (Counted(station.WeaponInfo) ? station.Ammo : 2);
+                }
                 budget[member] = rounds;
             }
+            List<Shortfall> short_ = Check(lead);
             int skipped = 0;
             foreach (StrikeItem item in plan)
             {
@@ -104,13 +187,16 @@ namespace NOrders
                 int most = int.MinValue;
                 foreach (Flight member in members)
                 {
-                    if (StationFor(member, item) == null) continue;
-                    if (budget[member] > most) { most = budget[member]; best = member; }
+                    WeaponStation candidate = StationFor(member, item);
+                    if (candidate == null) continue;
+                    budget[member].TryGetValue(candidate.WeaponInfo.name, out int have);
+                    if (have > most) { most = have; best = member; }
                 }
                 if (best == null) { skipped++; continue; }
                 lists[best].Add(item);
                 WeaponStation station = StationFor(best, item);
-                budget[best] -= station.WeaponInfo.missile ? ShotDisciplinePatch.AllowedOn(best, item.Target, station.WeaponInfo) : 1;
+                budget[best].TryGetValue(station.WeaponInfo.name, out int had);
+                budget[best][station.WeaponInfo.name] = had - RoundsFor(best, item, station.WeaponInfo);
             }
             int flying = 0, targets = 0;
             foreach (Flight member in members)
@@ -124,6 +210,7 @@ namespace NOrders
             if (flying == 0) return lead.Name + " · nothing aboard can attack the planned targets";
             string line = (lead.Wing ?? lead.Name) + " · strike authorised · " + targets + " target(s)" +
                 (flying > 1 ? " over " + flying + " aircraft" : "") + (skipped > 0 ? " · " + skipped + " no weapon for" : "");
+            foreach (Shortfall f in short_) line += " · short: " + Describe(f);
             Host.LogInfo("[flight] " + line);
             return line;
         }
@@ -275,7 +362,7 @@ namespace NOrders
                 WeaponStation station = null;
                 foreach (Flight member in Wings.Group(lead)) if ((station = StationFor(member, item)) != null) break;
                 if (station == null) { noWeapon++; continue; }
-                if (!station.WeaponInfo.missile) { separate++; continue; }
+                if (!Counted(station.WeaponInfo)) { separate++; continue; }
                 if (hq == null || !hq.TryGetKnownPosition(item.Target, out GlobalPosition known)) { separate++; continue; }
                 missiles.Add((item, station.WeaponInfo, known.ToLocalPosition()));
             }
@@ -301,12 +388,10 @@ namespace NOrders
                     if ((reach > 0f && to.magnitude > reach) || Vector3.Angle(inbound, to) > cone * 0.9f) outside++;
                 }
             }
-            Needs(flight, out int wanted, out int carried);
             int passes = (missiles.Count - outside > 0 ? 1 : 0) + outside + separate;
             var reasons = new List<string>();
             if (separate > 0) reasons.Add(separate + " by bomb, rocket or gun, a pass each");
             if (outside > 0) reasons.Add(outside + " outside one launch point's cone or range");
-            if (wanted > carried) { reasons.Add("wants " + wanted + " missiles, the wing carries " + carried); passes = Mathf.Max(passes, 2); }
             if (noWeapon > 0) reasons.Add(noWeapon + " nothing aboard can attack");
             why = string.Join(" · ", reasons.ToArray());
             return passes;
