@@ -921,7 +921,7 @@ namespace NOrders
         // the salvo the combat pilot has it, supporting the shot as it would.
         private const float BvrLoft = 1500f, BvrCeiling = 12000f, BvrMargin = 0.95f;
         private string bvrNote;
-        private float bvrRangeAt = -1f, bvrMax, bvrNoEscape;
+        private float bvrRangeAt = -1f, bvrMax, bvrNoEscape, bvrLoft;
 
         private void FlyBvr(Pilot pilot, Unit target, WeaponStation station)
         {
@@ -935,20 +935,34 @@ namespace NOrders
             if (Time.timeSinceLevelLoad - flight.RunInStarted > 240f) { CompleteRunIn(pilot, "intercept timed out"); return; }
             if (range < needs.minRange * 1.1f) { CompleteRunIn(pilot, "inside minimum range"); return; }
 
-            // Above it, and climbing while we close: never lower than now.
-            float loft = Mathf.Clamp(Mathf.Max(known.y + BvrLoft, here.y), ground + MinimumClearance, ground + BvrCeiling);
+            // How high to be: the lowest height from which the game says the
+            // shot reaches the target from here, found by trying heights up to
+            // the ceiling -- climb to that and fire, rather than closing. None
+            // high enough yet: as high as we can go while closing, and the
+            // needed height falls as the range does.
+            float ceiling = ground + BvrCeiling;
+            Missile prefab = info.weaponPrefab != null ? info.weaponPrefab.GetComponent<Missile>() : null;
             if (Time.timeSinceLevelLoad - bvrRangeAt >= 1f || bvrRangeAt < 0f)
             {
                 bvrRangeAt = Time.timeSinceLevelLoad;
                 bvrMax = needs.maxRange;
                 bvrNoEscape = needs.maxRange * 0.5f;
-                Missile prefab = info.weaponPrefab != null ? info.weaponPrefab.GetComponent<Missile>() : null;
+                bvrLoft = Mathf.Max(known.y + BvrLoft, here.y);
                 if (prefab != null)
                 {
-                    try { bvrMax = prefab.CalcRange(aircraft.speed, here.y, known.y, range, target.speed, out bvrNoEscape); }
+                    try
+                    {
+                        bvrMax = prefab.CalcRange(aircraft.speed, here.y, known.y, range, target.speed, out bvrNoEscape);
+                        float needed = -1f;
+                        for (float h = Mathf.Max(here.y, ground + MinimumClearance); h <= ceiling + 1f; h += 500f)
+                            if (prefab.CalcRange(aircraft.speed, h, known.y, range, target.speed, out _) * BvrMargin >= range) { needed = h; break; }
+                        bvrLoft = needed >= 0f ? needed + 100f : ceiling;
+                    }
                     catch { bvrMax = needs.maxRange; bvrNoEscape = needs.maxRange * 0.5f; }
                 }
             }
+            // Never lower than now: height given up is range given up.
+            float loft = Mathf.Clamp(Mathf.Max(bvrLoft, here.y), ground + MinimumClearance, ceiling);
             float extended = Mathf.Max(bvrMax * BvrMargin, needs.minRange * 1.5f);
             float noEscape = Mathf.Clamp(bvrNoEscape, needs.minRange * 1.5f, extended);
 
@@ -959,8 +973,9 @@ namespace NOrders
             string why = null;
             bool clear = flight.Threat != FlightThreat.Missile && !AirDefence.Threatens(aircraft, here, pressTo, out why);
             float launchAt = clear ? noEscape : extended;
-            string note = clear ? "pressing to " + (noEscape / 1000f).ToString("0") + " km, the way in is clear"
-                : "launching at " + (extended / 1000f).ToString("0") + " km · " + (flight.Threat == FlightThreat.Missile ? "under fire" : why);
+            string note = (clear ? "pressing to " + (noEscape / 1000f).ToString("0") + " km, the way in is clear"
+                : "launching at " + (extended / 1000f).ToString("0") + " km · " + (flight.Threat == FlightThreat.Missile ? "under fire" : why)) +
+                " · climbing to " + ((loft - ground) / 1000f).ToString("0") + " km";
             if (note != bvrNote) { bvrNote = note; Tracing.Flight("[flight] " + flight.Name + " · intercept · " + note); }
 
             float ordered = flight.Altitude;
