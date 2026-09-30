@@ -185,6 +185,12 @@ namespace NOrders
                 return;
             }
 
+            // Covered and holding the task: the pods have the missile, but chaff
+            // inside the range that matters still helps break its lock.
+            if (flight.StandOn && flight.Threat == FlightThreat.Missile && !flight.ThreatIsInfrared &&
+                flight.ThreatRange < 6000f && aircraft.autopilot is AutopilotPlane)
+                Chaff(flight.ThreatMissile);
+
             // A radar shot: full power, the shot on the beam (a Doppler seeker
             // sees the least closing speed there), chaff in bursts, and a
             // gentle descent toward the floor -- not the native pilot's dive
@@ -376,6 +382,27 @@ namespace NOrders
 
         // Chaff against a radar shot: the station the game picks for the
         // seeker type, fired in short bursts.
+        private static readonly System.Reflection.FieldInfo Stations = HarmonyLib.AccessTools.Field(typeof(CountermeasureManager), "countermeasureStations");
+
+        private static int ChaffStation(CountermeasureManager cm, Missile missile)
+        {
+            string seeker = missile.GetSeekerType();
+            if (seeker != "ARH" && seeker != "SARH") return -1;
+            if (!(Stations?.GetValue(cm) is System.Collections.IList list)) return -1;
+            for (int i = 0; i < list.Count && i < 255; i++)
+            {
+                object station = list[i];
+                if (station == null) continue;
+                var threats = HarmonyLib.AccessTools.Field(station.GetType(), "threatTypes")?.GetValue(station) as System.Collections.Generic.List<string>;
+                if (threats == null || !threats.Contains(seeker)) continue;
+                var carried = HarmonyLib.AccessTools.Field(station.GetType(), "countermeasures")?.GetValue(station) as System.Collections.IList;
+                if (carried == null) continue;
+                foreach (object item in carried)
+                    if (item != null && !(item is RadarJammer)) return i;
+            }
+            return -1;
+        }
+
         private void Chaff(Missile missile)
         {
             CountermeasureManager cm = aircraft.countermeasureManager;
@@ -384,8 +411,14 @@ namespace NOrders
             if (chaffOffAt > 0f && now >= chaffOffAt) { aircraft.Countermeasures(false, cm.activeIndex); chaffOffAt = -1f; }
             if (now < nextChaff) return;
             nextChaff = now + 1.2f;
-            string kind = cm.ChooseCountermeasure(missile);
-            if (string.IsNullOrEmpty(kind) || kind == "IR") return;
+            // Chaff, by what the station carries. The game's own choice takes the
+            // first station that answers the seeker type, and the built-in radar
+            // jammer answers ARH and SARH as chaff does: on airframes listing it
+            // first, every "chaff" burst was a jammer pulse and no chaff went
+            // out. The jammer is run separately (MissileJamming.SelfProtection).
+            int station = ChaffStation(cm, missile);
+            if (station < 0) return;
+            cm.activeIndex = (byte)station;
             aircraft.Countermeasures(true, cm.activeIndex);
             chaffOffAt = now + 0.15f;
         }

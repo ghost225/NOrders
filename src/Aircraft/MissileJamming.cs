@@ -122,7 +122,11 @@ namespace NOrders
         // missile is coming at one of our flights we are flying ourselves.
         private static readonly Dictionary<Aircraft, RadarJammer[]> ecm = new Dictionary<Aircraft, RadarJammer[]>();
         private static readonly HashSet<Aircraft> underThreat = new HashSet<Aircraft>();
-        private const float EcmFrom = 15000f;
+        // A radar seeker is kept from re-acquiring by ECM only inside 5 km
+        // (ARHSeeker: no return, under 5 km, intensity over 2), and the
+        // jammer draws its power store down -- weaker as the charge falls. On
+        // from 15 km, it had spent the charge before the only range it counts.
+        private const float EcmFrom = 6000f;
 
         private static void SelfProtection(bool choose)
         {
