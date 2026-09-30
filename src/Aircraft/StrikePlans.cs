@@ -319,20 +319,35 @@ namespace NOrders
                     if (!any) skipped++;
                     continue;
                 }
-                Flight best = null;
-                int most = int.MinValue;
+                // The rounds this target wants may be more than any one aircraft
+                // carries -- four a target from a wing carrying one each: the
+                // aircraft with the most of its weapon take it in turn until
+                // the rounds are covered. Before, only the first did, and fired
+                // its one round while the rest flew formation.
+                var carriers = new List<(Flight member, WeaponStation station, int have)>();
                 foreach (Flight member in members)
                 {
                     WeaponStation candidate = StationFor(member, item);
                     if (candidate == null) continue;
                     budget[member].TryGetValue(candidate.WeaponInfo.name, out int have);
-                    if (have > most) { most = have; best = member; }
+                    carriers.Add((member, candidate, have));
                 }
-                if (best == null) { skipped++; continue; }
-                lists[best].Add(item);
-                WeaponStation station = StationFor(best, item);
-                budget[best].TryGetValue(station.WeaponInfo.name, out int had);
-                budget[best][station.WeaponInfo.name] = had - RoundsFor(best, item, station.WeaponInfo);
+                if (carriers.Count == 0) { skipped++; continue; }
+                // Most rounds first; level on rounds, the one with the fewest
+                // targets so far -- ties had all gone to the lead.
+                carriers.Sort((a, b) => b.have != a.have ? b.have.CompareTo(a.have) : lists[a.member].Count.CompareTo(lists[b.member].Count));
+                int need = RoundsFor(carriers[0].member, item, carriers[0].station.WeaponInfo);
+                bool counted = Counted(carriers[0].station.WeaponInfo);
+                int given = 0;
+                foreach (var c in carriers)
+                {
+                    if (given > 0 && (c.have <= 0 || need <= 0)) break;
+                    lists[c.member].Add(item);
+                    given++;
+                    int share = counted ? Mathf.Min(Mathf.Max(c.have, 0), need) : 1;
+                    budget[c.member][c.station.WeaponInfo.name] = c.have - share;
+                    need -= counted ? Mathf.Max(share, 1) : need;
+                }
             }
             int flying = 0, targets = 0;
             foreach (Flight member in members)

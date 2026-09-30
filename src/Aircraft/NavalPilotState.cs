@@ -173,6 +173,12 @@ namespace NOrders
                 float bar = SlowBar();
                 bool justOut = recoveringSince < 0f && Time.timeSinceLevelLoad - recoveredAt < 20f;
                 bool slow = bar > 0f && aircraft.speed < bar * (justOut ? 0.93f : 1f);
+                // A wingman flies the lead's speed and its formation code sets
+                // the power: only real stall danger takes it out of formation.
+                // Wingmen of a heavy lead cruising under the bar were leaving
+                // the formation every few seconds to "recover".
+                if (slow && flight.Mode == FlightMode.Formation && parameters != null && parameters.takeoffSpeed > 0f)
+                    slow = aircraft.speed < parameters.takeoffSpeed * 1.1f;
                 bool low = aircraft.radarAlt < 150f && flight.Mode != FlightMode.Egress && flight.Mode != FlightMode.Strike;
                 if ((slow || low) && !flight.EvadingInfrared)
                 {
@@ -812,7 +818,7 @@ namespace NOrders
             if (parameters == null) return 0f;
             float bar = float.PositiveInfinity;
             if (parameters.cornerSpeed > 0f) bar = Mathf.Min(bar, parameters.cornerSpeed * 1.05f);
-            if (parameters.takeoffSpeed > 0f) bar = Mathf.Min(bar, parameters.takeoffSpeed * 1.5f);
+            if (parameters.takeoffSpeed > 0f) bar = Mathf.Min(bar, parameters.takeoffSpeed * 1.25f);
             if (parameters.maxSpeed > 0f) bar = Mathf.Min(bar, parameters.maxSpeed * 0.6f);
             return float.IsInfinity(bar) ? 0f : bar;
         }
