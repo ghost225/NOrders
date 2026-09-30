@@ -833,6 +833,13 @@ namespace NOrders
             }
             // A missile we launch ourselves: no dive, no pressing in.
             WeaponInfo weapon = station?.WeaponInfo;
+            // A glide bomb: dropped on the cue, it guides itself in.
+            if (weapon != null && weapon.glideBomb && station.Ammo > 0 && !Host.Dead(target) && hq != null &&
+                hq.TryGetKnownPosition(target, out GlobalPosition glideTo))
+            {
+                FlyGlideDrop(pilot, target, glideTo, station);
+                return;
+            }
             if (weapon != null && weapon.missile && !weapon.laserGuided && !weapon.bomb && station.Ammo > 0 &&
                 !Host.Dead(target) && hq != null && hq.TryGetKnownPosition(target, out GlobalPosition seen))
             {
@@ -1027,6 +1034,53 @@ namespace NOrders
                 if (station.Ammo <= 0 || flight.SalvoLeft <= 0) CompleteRunIn(pilot, "launched");
             }
             finally { flight.Altitude = ordered; }
+        }
+
+        // A glide bomb, dropped on the cockpit's cue rather than the combat
+        // pilot's, which waits for a track accurate to a few tens of metres
+        // and flew a flight straight over its targets at height without a
+        // release. Level at the flight's height, full power for the glide,
+        // nose on the target; dropped once the bomb can reach it -- the
+        // game's own glide test, height above the target plus the speed's
+        // worth of energy over the distance -- and the target is inside its
+        // release cone. The bomb guides itself in.
+        internal static bool GlideReach(Aircraft aircraft, WeaponInfo info, GlobalPosition known)
+        {
+            GlobalPosition here = aircraft.GlobalPosition();
+            Vector3 to = known - here;
+            float along = new Vector3(to.x, 0f, to.z).magnitude;
+            if (along < Mathf.Max(info.targetRequirements.minRange, 1f)) return false;
+            float drop = here.y - known.y + aircraft.speed * aircraft.speed * 0.03f;
+            float cone = info.targetRequirements.minAlignment > 0f ? info.targetRequirements.minAlignment : 30f;
+            return drop / along > GlideSlope && Vector3.Angle(aircraft.transform.forward, to) < cone;
+        }
+        private const float GlideSlope = 0.22f;     // the game's own test is 0.2; a little in hand
+
+        private void FlyGlideDrop(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station)
+        {
+            WeaponInfo info = station.WeaponInfo;
+            if (Time.timeSinceLevelLoad - flight.RunInStarted > 240f) { CompleteRunIn(pilot, "glide run timed out"); return; }
+            if (Horizontal(known, aircraft.GlobalPosition()) < Mathf.Max(info.targetRequirements.minRange, 300f)) { CompleteRunIn(pilot, "too close for a glide"); return; }
+            controlInputs.throttle = 1f;
+            Steer(known);
+            if (!GlideReach(aircraft, info, known) || Time.timeSinceLevelLoad - flight.LastLaunchAt < 2f) return;
+            if (flight.SalvoLeft <= 0) flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
+            aircraft.weaponManager.currentWeaponStation = station;
+            List<Unit> targets = aircraft.weaponManager.GetTargetList();
+            targets.Clear();
+            int found = CombatAI.LookForMissileTargets(aircraft, target, station, targets);
+            aircraft.weaponManager.TargetListChanged();
+            if (found <= 0) { targets.Add(target); aircraft.weaponManager.TargetListChanged(); }
+            int before = station.Ammo;
+            pilot.Fire();
+            flight.LastLaunchAt = Time.timeSinceLevelLoad;
+            if (station.Ammo < before)
+            {
+                flight.SalvoLeft--;
+                Tracing.Flight("[flight] " + flight.Name + " · glide bomb away · " + (info.weaponName ?? "bomb") + " at " +
+                    (Horizontal(known, aircraft.GlobalPosition()) / 1000f).ToString("0.0") + " km from " + aircraft.radarAlt.ToString("0") + " m");
+            }
+            if (station.Ammo <= 0 || flight.SalvoLeft <= 0) CompleteRunIn(pilot, "glide bombs away");
         }
 
         private void FlyStandoffLaunch(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station)

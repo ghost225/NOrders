@@ -214,12 +214,16 @@ namespace NOrders
             FactionHQ hq = aircraft.NetworkHQ;
             foreach (WeaponStation station in FlightOrders.ArmedStations(aircraft))
             {
-                if (!station.WeaponInfo.missile || station.Ammo <= 0) continue;
+                if (!(station.WeaponInfo.missile || station.WeaponInfo.glideBomb) || station.Ammo <= 0) continue;
                 var targets = new List<Unit>();
                 foreach (StrikeItem item in flight.StrikeList)
                 {
                     if (Host.Dead(item.Target) || StationFor(flight, item) != station) continue;
-                    if (!Reachable(aircraft, station.WeaponInfo, item.Target, out _)) continue;
+                    if (station.WeaponInfo.glideBomb)
+                    {
+                        if (!aircraft.NetworkHQ.TryGetKnownPosition(item.Target, out GlobalPosition glideTo) || !NavalPilotState.GlideReach(aircraft, station.WeaponInfo, glideTo)) continue;
+                    }
+                    else if (!Reachable(aircraft, station.WeaponInfo, item.Target, out _)) continue;
                     int want = ShotDisciplinePatch.AllowedOn(flight, item.Target, station.WeaponInfo) - ShotDisciplinePatch.Closing(hq, item.Target);
                     for (int n = 0; n < want && targets.Count < station.Ammo; n++) targets.Add(item.Target);
                 }
