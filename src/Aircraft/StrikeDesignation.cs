@@ -93,10 +93,25 @@ namespace NOrders
                 // all the attacks it needs -- a truck needs one -- which is not
                 // the same as being unable to hurt it.
                 string name = ShipNames.Of(target);
-                bool covered = FlightOrders.CapableOf(target).Contains(flight);
+                bool capable = FlightOrders.CapableOf(target).Contains(flight);
+                // The scorer also says nothing when the target is simply out of
+                // reach from here -- an aircraft well above and beyond it. With
+                // nothing of ours closing that is no reason to leave: stay on it
+                // with the weapon that can hit it, and the combat pilot closes
+                // and climbs until it can. Breaking off instead, a strike list
+                // sent the flight straight back, over and over, and each hand-
+                // over sank the wing further.
+                WeaponStation reach = capable && inFlight == 0 ? FlightOrders.BestStationFor(aircraft, target) : null;
+                if (reach != null)
+                {
+                    __result = new CombatAI.TargetSearchResults(target, reach, 0.01f, !anyAmmo);
+                    return;
+                }
+                bool covered = capable && inFlight > 0;
                 Tracing.Flight("[flight] " + flight.Name + (covered
                     ? " · " + name + " · " + inFlight + " missile(s) already closing on it, rejoining"
                     : " · cannot engage " + name + ", breaking off"));
+                if (covered && flight.StrikeList.Count > 0) { StrikePlans.Next(flight, "covered"); return; }
                 if (covered) Host.Say(flight.Name + " · " + inFlight + " missile(s) already closing on " + name + ", rejoining");
                 FlightOrders.BreakOff(flight);
                 return;
