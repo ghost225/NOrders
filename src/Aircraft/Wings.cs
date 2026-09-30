@@ -506,6 +506,10 @@ namespace NOrders
             if (lead?.Wing == null) return lead;
             foreach (Flight member in Wings.Members(lead.Wing))
             {
+                // A movement order calls off the wing's strike: every member's
+                // list goes, not only the lead's -- wingmen kept theirs, and
+                // their strike lines stayed on the map.
+                if (member != lead) StrikePlans.Cancel(member);
                 if (member == lead || member.Mode == FlightMode.Formation) continue;
                 if (member.Mode == FlightMode.ReturnToBase && lead.Mode != FlightMode.ReturnToBase) continue;   // bingo is bingo
                 member.Mode = FlightMode.Formation;
