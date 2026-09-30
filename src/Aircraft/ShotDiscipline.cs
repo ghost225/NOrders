@@ -36,7 +36,11 @@ namespace NOrders
                 if (flight == null && !Host.CommandsFaction(aircraft.NetworkHQ)) return true;
                 WeaponStation station = __instance.currentWeaponStation;
                 WeaponInfo info = station?.WeaponInfo;
-                if (info == null || !info.missile || info.gun || info.sling || info.cargo || info.troops) return true;
+                // Every launched store -- missiles and unguided rockets alike; not
+                // guns, bombs, cargo or pods. Rockets are not flagged "missile"
+                // and slipped past the cone (a Sledge put rockets out well off
+                // its nose).
+                if (info == null || info.gun || info.bomb || info.glideBomb || info.sling || info.cargo || info.troops || info.jammer || info.rearmGround || info.rearmShip) return true;
                 List<Unit> targets = __instance.GetTargetList();
                 Unit target = targets != null && targets.Count > 0 ? targets[0] : null;
                 if (target == null) return true;
@@ -64,6 +68,7 @@ namespace NOrders
                     OffNose++;
                     return false;
                 }
+                if (!info.missile) return true;                          // a rocket: the cone was the whole question
                 // Overkill: an over-the-horizon (anti-ship) missile, or one that
                 // costs several times what the target is worth, is not spent on
                 // a vehicle when another armed anti-surface station in range
