@@ -919,7 +919,12 @@ namespace NOrders
         // own (Missile.CalcRange, what the HUD shows a pilot), worked out
         // from our speed and height and the target's as they are now. After
         // the salvo the combat pilot has it, supporting the shot as it would.
-        private const float BvrLoft = 1500f, BvrCeiling = 12000f, BvrMargin = 0.95f;
+        private const float BvrLoft = 1500f, BvrMargin = 0.95f;
+        // Heights above sea level: a shot needing more than BvrTooHigh is not
+        // climbed for; the flight holds at BvrHold and closes until the height
+        // it needs is down to BvrHold, then climbs to that and fires.
+        private const float BvrTooHigh = 10000f, BvrHold = 8000f;
+        private bool bvrClosingIn;
         private string bvrNote;
         private float bvrRangeAt = -1f, bvrMax, bvrNoEscape, bvrLoft;
 
@@ -940,7 +945,7 @@ namespace NOrders
             // the ceiling -- climb to that and fire, rather than closing. None
             // high enough yet: as high as we can go while closing, and the
             // needed height falls as the range does.
-            float ceiling = ground + BvrCeiling;
+            float ceiling = Mathf.Max(BvrTooHigh, ground + MinimumClearance);
             Missile prefab = info.weaponPrefab != null ? info.weaponPrefab.GetComponent<Missile>() : null;
             if (Time.timeSinceLevelLoad - bvrRangeAt >= 1f || bvrRangeAt < 0f)
             {
@@ -956,13 +961,18 @@ namespace NOrders
                         float needed = -1f;
                         for (float h = Mathf.Max(here.y, ground + MinimumClearance); h <= ceiling + 1f; h += 500f)
                             if (prefab.CalcRange(aircraft.speed, h, known.y, range, target.speed, out _) * BvrMargin >= range) { needed = h; break; }
-                        bvrLoft = needed >= 0f ? needed + 100f : ceiling;
+                        // Too high to climb for: hold at 8 km and close until it
+                        // is not; 8 to 10 km, climb for it as found.
+                        if (needed < 0f || needed > BvrTooHigh) bvrClosingIn = true;
+                        else if (needed <= BvrHold) bvrClosingIn = false;
+                        bvrLoft = bvrClosingIn ? Mathf.Min(BvrHold, Mathf.Max(here.y, known.y + BvrLoft)) : needed + 100f;
                     }
                     catch { bvrMax = needs.maxRange; bvrNoEscape = needs.maxRange * 0.5f; }
                 }
             }
-            // Never lower than now: height given up is range given up.
-            float loft = Mathf.Clamp(Mathf.Max(bvrLoft, here.y), ground + MinimumClearance, ceiling);
+            // Never lower than now (height given up is range given up), and
+            // not above the hold height while closing in.
+            float loft = Mathf.Clamp(Mathf.Max(bvrLoft, bvrClosingIn ? Mathf.Min(here.y, BvrHold) : here.y), ground + MinimumClearance, ceiling);
             float extended = Mathf.Max(bvrMax * BvrMargin, needs.minRange * 1.5f);
             float noEscape = Mathf.Clamp(bvrNoEscape, needs.minRange * 1.5f, extended);
 
@@ -975,7 +985,8 @@ namespace NOrders
             float launchAt = clear ? noEscape : extended;
             string note = (clear ? "pressing to " + (noEscape / 1000f).ToString("0") + " km, the way in is clear"
                 : "launching at " + (extended / 1000f).ToString("0") + " km · " + (flight.Threat == FlightThreat.Missile ? "under fire" : why)) +
-                " · climbing to " + ((loft - ground) / 1000f).ToString("0") + " km";
+                (bvrClosingIn ? " · too high to climb for, closing in at " + (BvrHold / 1000f).ToString("0") + " km"
+                    : " · climbing to " + (loft / 1000f).ToString("0") + " km");
             if (note != bvrNote) { bvrNote = note; Tracing.Flight("[flight] " + flight.Name + " · intercept · " + note); }
 
             float ordered = flight.Altitude;
