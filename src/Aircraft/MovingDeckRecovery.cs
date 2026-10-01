@@ -25,6 +25,8 @@ namespace NOrders
         private const float AtRest = 1.2f;          // m/s relative to the deck
         private const float OverDeck = 15f;         // metres above the deck's centre
         private const float Settle = 5f;            // seconds at rest before recovery
+        private const float TaxiSettle = 1.5f;      // seconds, for one taxiing on a deck
+        private const float TaxiSlow = 6f;          // m/s relative to the deck
 
         private static readonly Dictionary<Aircraft, float> restingSince = new Dictionary<Aircraft, float>();
         private static readonly System.Reflection.FieldInfo ToRunway = HarmonyLib.AccessTools.Field(typeof(AIPilotTaxiState), "toRunway");
@@ -54,10 +56,14 @@ namespace NOrders
                 // before it ever flew -- one of a wing of four off an Annex.
                 if (pilot == null || !pilot.flightInfo.HasTakenOff) continue;
                 if (state is AIPilotTaxiState taxi && ToRunway != null && (bool)ToRunway.GetValue(taxi)) continue;
-                if (!OnMovingDeck(aircraft, out Ship ship)) continue;
+                // Down on any ship's deck in the taxi state (held braking by
+                // DeckNoTaxiPatch): recovered as soon as it has slowed, moving
+                // ship or not.
+                bool taxiing = state is AIPilotTaxiState;
+                if (!OnMovingDeck(aircraft, out Ship ship, taxiing)) continue;
                 seen.Add(aircraft);
                 if (!restingSince.TryGetValue(aircraft, out float since)) { restingSince[aircraft] = Time.timeSinceLevelLoad; continue; }
-                if (Time.timeSinceLevelLoad - since < Settle) continue;
+                if (Time.timeSinceLevelLoad - since < (taxiing ? TaxiSettle : Settle)) continue;
 
                 restingSince.Remove(aircraft);
                 seen.Remove(aircraft);
@@ -66,7 +72,7 @@ namespace NOrders
             foreach ((Aircraft aircraft, Ship ship) in recover)
             {
                 Host.LogInfo("[deck] " + (FlightOrders.Of(aircraft)?.Name ?? aircraft.definition?.unitName ?? aircraft.name) +
-                    " recovered aboard " + ShipNames.Of(ship) + " (ship under way)");
+                    " recovered aboard " + ShipNames.Of(ship));
                 aircraft.NetworkunitState = Unit.UnitState.Abandoned;
                 aircraft.ReturnToInventory();
             }
@@ -75,8 +81,29 @@ namespace NOrders
             foreach (Aircraft aircraft in gone) restingSince.Remove(aircraft);
         }
 
+        // The ship whose deck this aircraft is on, if any, whatever either is
+        // doing: low over a ship's airbase, inside its footprint.
+        internal static Ship DeckUnder(Aircraft aircraft)
+        {
+            FactionHQ hq = aircraft?.NetworkHQ;
+            if (hq == null) return null;
+            Vector3 at = aircraft.transform.position;
+            foreach (Airbase airbase in hq.GetAirbases())
+            {
+                if (airbase == null || airbase.disabled || !airbase.AttachedAirbase) continue;
+                Ship deck = Airfields.ShipOf(airbase);
+                if (deck == null || deck.disabled) continue;
+                Vector3 centre = airbase.center != null ? airbase.center.position : airbase.transform.position;
+                Vector3 flat = at - centre; flat.y = 0f;
+                if (flat.magnitude > Mathf.Max(airbase.GetRadius(), deck.maxRadius)) continue;
+                if (at.y - centre.y > OverDeck) continue;
+                return deck;
+            }
+            return null;
+        }
+
         // At rest on the deck of a ship that is itself moving.
-        private static bool OnMovingDeck(Aircraft aircraft, out Ship ship)
+        private static bool OnMovingDeck(Aircraft aircraft, out Ship ship, bool taxiing = false)
         {
             ship = null;
             FactionHQ hq = aircraft.NetworkHQ;
@@ -87,18 +114,48 @@ namespace NOrders
                 if (airbase == null || airbase.disabled || !airbase.AttachedAirbase) continue;
                 Ship deck = Airfields.ShipOf(airbase);
                 if (deck == null || deck.disabled || deck.rb == null) continue;
-                if (deck.rb.velocity.magnitude < ShipMoving) continue;
+                if (!taxiing && deck.rb.velocity.magnitude < ShipMoving) continue;
                 Vector3 centre = airbase.center != null ? airbase.center.position : airbase.transform.position;
                 Vector3 flat = at - centre; flat.y = 0f;
                 if (flat.magnitude > Mathf.Max(airbase.GetRadius(), deck.maxRadius)) continue;
                 if (at.y - centre.y > OverDeck) continue;
                 Vector3 relative = aircraft.rb.velocity - deck.rb.GetPointVelocity(at);
-                if (relative.magnitude > AtRest) continue;
+                if (relative.magnitude > (taxiing ? TaxiSlow : AtRest)) continue;
                 if (!Ownership.Acts(deck)) continue;
                 ship = deck;
                 return true;
             }
             return false;
+        }
+    }
+
+    // No taxiing on a ship's deck after a landing: the aircraft brakes to a
+    // stop where it is and waits to be recovered (MovingDeckRecovery). The
+    // game taxis it to a service point, and a deck is no place for that -- an
+    // Eclipse landed, taxied, and rolled off the side into the sea. Launches
+    // (taxiing out to the runway, before take-off) are left alone. A fix to
+    // the game's behaviour, so Ownership.Acts on the ship.
+    [HarmonyLib.HarmonyPatch(typeof(AIPilotTaxiState), nameof(AIPilotTaxiState.FixedUpdateState))]
+    internal static class DeckNoTaxiPatch
+    {
+        private const string Name = "No taxiing on deck";
+        private static readonly System.Reflection.FieldInfo ToRunway = HarmonyLib.AccessTools.Field(typeof(AIPilotTaxiState), "toRunway");
+
+        private static bool Prefix(AIPilotTaxiState __instance, Pilot pilot)
+        {
+            if (!Guard.Ok(Name)) return true;
+            try
+            {
+                Aircraft aircraft = pilot?.aircraft;
+                if (aircraft == null || aircraft.Player != null || !aircraft.IsServer || !pilot.flightInfo.HasTakenOff) return true;
+                if (ToRunway != null && (bool)ToRunway.GetValue(__instance)) return true;
+                Ship deck = MovingDeckRecovery.DeckUnder(aircraft);
+                if (deck == null || !Ownership.Acts(deck)) return true;
+                ControlInputs inputs = aircraft.GetInputs();
+                if (inputs != null) { inputs.throttle = 0f; inputs.brake = 1f; inputs.yaw = 0f; }
+                return false;
+            }
+            catch (System.Exception ex) { Guard.Failed(Name, ex); return true; }
         }
     }
 }

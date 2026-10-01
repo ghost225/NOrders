@@ -1255,6 +1255,7 @@ namespace NOrders
         // and never to a ship that is turning (DeckWaveOff). Helicopters land
         // on their own pads and go straight to the game's landing.
         private bool marshalling;
+        private float gateSince = -1f;
         private void FlyHome(Pilot pilot)
         {
             Airbase field = flight.Home;
@@ -1265,32 +1266,75 @@ namespace NOrders
                 return;
             }
             GlobalPosition centre = Airfields.PositionOf(field);
-            float distance = Horizontal(centre, aircraft.GlobalPosition());
+            Ship deck = Airfields.ShipOf(field);
+            Vector3 astern = deck != null ? -Flat(deck.transform.forward).normalized : Vector3.zero;
+            // The stack: overhead a land field, astern of a ship.
+            GlobalPosition stack = deck != null ? centre + astern * RecoveryQueue.MarshalAstern : centre;
+            float distance = Horizontal(stack, aircraft.GlobalPosition());
             string name = Airfields.NameOf(field);
             if (distance > RecoveryQueue.MarshalRange)
             {
-                flight.Doing("RETURNING · " + UnitConverter.DistanceReading(distance) + " to " + name);
-                Steer(centre);
+                gateSince = -1f;
+                flight.Doing("RETURNING · " + UnitConverter.DistanceReading(Horizontal(centre, aircraft.GlobalPosition())) + " to " + name);
+                Steer(stack);
                 return;
             }
             if (RecoveryQueue.Cleared(flight, field, out int place, out string why))
             {
-                if (marshalling) Host.LogInfo("[flight] " + flight.Name + " · leaving the marshal, cleared to land on " + name);
+                // At sea: down the extended centreline from the gate, lined up,
+                // before the game's approach has it. Two minutes at most.
+                if (deck != null && !AtGate(deck, centre, astern))
+                {
+                    if (gateSince < 0f) gateSince = Time.timeSinceLevelLoad;
+                    if (Time.timeSinceLevelLoad - gateSince < 120f)
+                    {
+                        GlobalPosition gate = centre + astern * RecoveryQueue.GateAstern;
+                        float ordered = flight.Altitude;
+                        flight.Altitude = RecoveryQueue.GateHeight;
+                        flight.Doing("CLEARED · lining up astern · " + UnitConverter.DistanceReading(Horizontal(gate, aircraft.GlobalPosition())) + " to the gate");
+                        // Onto the centreline heading up it: from too close in,
+                        // out past the gate first; from astern, at a point on
+                        // the line a little ahead, which turns it onto the line.
+                        Vector3 fromShip = aircraft.GlobalPosition() - centre; fromShip.y = 0f;
+                        float behind = Vector3.Dot(fromShip, astern);
+                        Steer(behind < RecoveryQueue.GateAstern - 1000f
+                            ? centre + astern * (RecoveryQueue.GateAstern + 3000f)
+                            : centre + astern * Mathf.Max(behind - 2500f, 2000f));
+                        flight.Altitude = ordered;
+                        return;
+                    }
+                }
+                if (marshalling || gateSince >= 0f) Host.LogInfo("[flight] " + flight.Name + " · on the approach to " + name);
                 marshalling = false;
+                gateSince = -1f;
                 HandBackToLanding(pilot);
                 return;
             }
+            gateSince = -1f;
             if (!marshalling)
             {
                 marshalling = true;
-                Host.LogInfo("[flight] " + flight.Name + " · marshalling over " + name + (why != null ? " · " + why : ""));
+                Host.LogInfo("[flight] " + flight.Name + " · marshalling " + (deck != null ? "astern of " : "over ") + name + (why != null ? " · " + why : ""));
             }
-            // The stack: the next to land lowest, each after it higher.
-            float ordered = flight.Altitude;
+            // The next to land lowest, each after it higher.
+            float held = flight.Altitude;
             flight.Altitude = RecoveryQueue.MarshalBase + Mathf.Max(place - 1, 0) * RecoveryQueue.MarshalStep;
             flight.Doing("MARSHAL · " + (place > 0 ? "#" + place + " to land" : "holding") + (why != null ? " · " + why : "") + " · " + name);
-            FlyOrbit(centre, RecoveryQueue.MarshalRadius);
-            flight.Altitude = ordered;
+            FlyOrbit(stack, RecoveryQueue.MarshalRadius);
+            flight.Altitude = held;
+        }
+
+        // Inside the gate: astern of the ship within a few kilometres of the
+        // centreline, heading up it, and down near the approach height.
+        private bool AtGate(Ship deck, GlobalPosition centre, Vector3 astern)
+        {
+            Vector3 fromShip = aircraft.GlobalPosition() - centre; fromShip.y = 0f;
+            float behind = Vector3.Dot(fromShip, astern);
+            float off = (fromShip - astern * behind).magnitude;
+            Vector3 heading = Flat(aircraft.rb != null && aircraft.speed > 5f ? aircraft.rb.velocity : aircraft.transform.forward);
+            bool lined = Vector3.Angle(heading, -astern) < 30f;
+            return behind > 2500f && behind < RecoveryQueue.GateAstern + 1500f && off < 1200f && lined &&
+                   aircraft.radarAlt < RecoveryQueue.GateHeight + 300f;
         }
 
         private void HandBackToLanding(Pilot pilot)
