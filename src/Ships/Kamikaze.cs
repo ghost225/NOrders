@@ -51,16 +51,28 @@ namespace NOrders
 
         private static readonly Dictionary<Ship, Unit> assigned = new Dictionary<Ship, Unit>();
 
-        public static bool Is(Ship ship) => ship != null && AiType != null && ship.GetComponent(AiType) != null;
+        // Usable only with everything we rely on present: the mod's drone AI,
+        // the methods we drive it through, and a Keres in the encyclopedia.
+        // An Aryx update that renamed any of them hides every Keres option
+        // rather than offering ones that would do nothing.
+        public static bool Available => AiType != null && setTarget != null && clearTarget != null &&
+            AccessTools.Method(AiType, "ChooseTarget") != null && Definition() != null;
+
+        public static bool Is(Ship ship) => ship != null && AiType != null && setTarget != null && ship.GetComponent(AiType) != null;
 
         public static bool IsType(UnitDefinition type) =>
             type?.unitPrefab != null && AiType != null && type.unitPrefab.GetComponent(AiType) != null;
 
         // The Keres definition, if the mod is loaded.
+        private static UnitDefinition definition;
+        private static float nextLookup;
+
         public static UnitDefinition Definition()
         {
-            if (AiType == null || Encyclopedia.Lookup == null) return null;
-            foreach (UnitDefinition type in Encyclopedia.Lookup.Values) if (IsType(type)) return type;
+            if (definition != null) return definition;
+            if (AiType == null || Encyclopedia.Lookup == null || Time.unscaledTime < nextLookup) return null;
+            nextLookup = Time.unscaledTime + 10f;
+            foreach (UnitDefinition type in Encyclopedia.Lookup.Values) if (IsType(type)) return definition = type;
             return null;
         }
 
