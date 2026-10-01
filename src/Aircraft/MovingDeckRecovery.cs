@@ -26,7 +26,7 @@ namespace NOrders
         private const float OverDeck = 15f;         // metres above the deck's centre
         private const float Settle = 5f;            // seconds at rest before recovery
         private const float TaxiSettle = 1.5f;      // seconds, for one taxiing on a deck
-        private const float TaxiSlow = 6f;          // m/s relative to the deck
+        private const float TaxiSlow = 1.5f;        // m/s relative to the deck: braked to a stop
 
         private static readonly Dictionary<Aircraft, float> restingSince = new Dictionary<Aircraft, float>();
         private static readonly Dictionary<Aircraft, (float at, Ship ship)> exiting = new Dictionary<Aircraft, (float, Ship)>();
@@ -46,6 +46,14 @@ namespace NOrders
             var recover = new List<(Aircraft, Ship)>();
             foreach (Unit unit in UnitRegistry.allUnits)
             {
+                // An airframe left abandoned on a deck, crew gone, by whatever
+                // route: returned like the rest.
+                if (unit is Aircraft left && left.unitState == Unit.UnitState.Abandoned && left.IsServer && !exiting.ContainsKey(left) &&
+                    MovingDeckRecovery.DeckUnder(left) is Ship leftOn && Ownership.Acts(leftOn))
+                {
+                    exiting[left] = (Time.timeSinceLevelLoad - CrewOut + 2f, leftOn);
+                    continue;
+                }
                 if (!(unit is Aircraft aircraft) || aircraft.disabled || aircraft.Player != null || aircraft.rb == null || !aircraft.IsServer) continue;
                 Pilot pilot = FlightOrders.FirstPilot(aircraft);
                 PilotBaseState state = pilot?.currentState;
@@ -87,7 +95,11 @@ namespace NOrders
             foreach (KeyValuePair<Aircraft, (float at, Ship ship)> entry in exiting)
             {
                 Aircraft aircraft = entry.Key;
-                if (aircraft == null || aircraft.disabled) { returned.Add(aircraft); continue; }
+                // Gone only once returned or destroyed: an airframe the crew
+                // have left is marked abandoned and disabled by the game, and
+                // taking that for gone left a Vipers' airframe on the deck.
+                if (aircraft == null || aircraft.unitState == Unit.UnitState.Returned || aircraft.unitState == Unit.UnitState.Destroyed)
+                { returned.Add(aircraft); continue; }
                 if (Time.timeSinceLevelLoad - entry.Value.at < CrewOut) continue;
                 returned.Add(aircraft);
                 Host.LogInfo("[deck] " + (FlightOrders.Of(aircraft)?.Name ?? aircraft.definition?.unitName ?? aircraft.name) +

@@ -1255,7 +1255,8 @@ namespace NOrders
         // and never to a ship that is turning (DeckWaveOff). Helicopters land
         // on their own pads and go straight to the game's landing.
         private bool marshalling;
-        private float gateSince = -1f;
+        private float gateSince = -1f, gateSide = 1f;
+        private int gateLeg;
         private void FlyHome(Pilot pilot)
         {
             Airbase field = flight.Home;
@@ -1281,25 +1282,37 @@ namespace NOrders
             }
             if (RecoveryQueue.Cleared(flight, field, out int place, out string why))
             {
-                // At sea: down the extended centreline from the gate, lined up,
-                // before the game's approach has it. Two minutes at most.
+                // At sea: a fixed two-leg pattern onto the extended centreline
+                // before the game's approach has it -- out to a point wide of
+                // the line and well astern, then in down the line -- with the
+                // leg kept, not re-decided each frame: deciding it afresh from
+                // thresholds flipped it back and forth round the gate, and the
+                // turning climbed it out of reach. Two minutes at most.
                 if (deck != null && !AtGate(deck, centre, astern))
                 {
-                    if (gateSince < 0f) gateSince = Time.timeSinceLevelLoad;
+                    if (gateSince < 0f)
+                    {
+                        gateSince = Time.timeSinceLevelLoad;
+                        Vector3 from = aircraft.GlobalPosition() - centre; from.y = 0f;
+                        Vector3 side = Vector3.Cross(Vector3.up, astern);
+                        gateSide = Vector3.Dot(from, side) >= 0f ? 1f : -1f;
+                        gateLeg = Vector3.Dot(from, astern) > RecoveryQueue.GateAstern + 2000f ? 1 : 0;
+                    }
                     if (Time.timeSinceLevelLoad - gateSince < 120f)
                     {
-                        GlobalPosition gate = centre + astern * RecoveryQueue.GateAstern;
+                        Vector3 across = Vector3.Cross(Vector3.up, astern) * gateSide;
+                        GlobalPosition wide = centre + astern * (RecoveryQueue.GateAstern + 3500f) + across * 2000f;
+                        if (gateLeg == 0 && Horizontal(wide, aircraft.GlobalPosition()) < 1500f) gateLeg = 1;
                         float ordered = flight.Altitude;
                         flight.Altitude = RecoveryQueue.GateHeight;
-                        flight.Doing("CLEARED · lining up astern · " + UnitConverter.DistanceReading(Horizontal(gate, aircraft.GlobalPosition())) + " to the gate");
-                        // Onto the centreline heading up it: from too close in,
-                        // out past the gate first; from astern, at a point on
-                        // the line a little ahead, which turns it onto the line.
                         Vector3 fromShip = aircraft.GlobalPosition() - centre; fromShip.y = 0f;
                         float behind = Vector3.Dot(fromShip, astern);
-                        Steer(behind < RecoveryQueue.GateAstern - 1000f
-                            ? centre + astern * (RecoveryQueue.GateAstern + 3000f)
-                            : centre + astern * Mathf.Max(behind - 2500f, 2000f));
+                        // In too close without getting lined up: out and round again.
+                        if (gateLeg == 1 && behind < 2500f) gateLeg = 0;
+                        GlobalPosition aim = gateLeg == 0 ? wide : centre + astern * Mathf.Max(behind - 2500f, 1500f);
+                        flight.Doing("CLEARED · " + (gateLeg == 0 ? "out to turn in" : "turning in down the line") + " · " +
+                            UnitConverter.DistanceReading(Horizontal(centre, aircraft.GlobalPosition())) + " astern");
+                        Steer(aim, default, 35f);
                         flight.Altitude = ordered;
                         return;
                     }
@@ -1332,9 +1345,11 @@ namespace NOrders
             float behind = Vector3.Dot(fromShip, astern);
             float off = (fromShip - astern * behind).magnitude;
             Vector3 heading = Flat(aircraft.rb != null && aircraft.speed > 5f ? aircraft.rb.velocity : aircraft.transform.forward);
-            bool lined = Vector3.Angle(heading, -astern) < 30f;
-            return behind > 2500f && behind < RecoveryQueue.GateAstern + 1500f && off < 1200f && lined &&
-                   aircraft.radarAlt < RecoveryQueue.GateHeight + 300f;
+            bool lined = Vector3.Angle(heading, -astern) < 35f;
+            // The game's approach copes with a little height and offset; what
+            // it cannot cope with is starting overhead or crossways.
+            return gateLeg == 1 && behind > 2500f && behind < RecoveryQueue.GateAstern + 3000f && off < 1500f && lined &&
+                   aircraft.radarAlt < RecoveryQueue.GateHeight + 600f;
         }
 
         private void HandBackToLanding(Pilot pilot)
