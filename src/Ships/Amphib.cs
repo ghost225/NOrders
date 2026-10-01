@@ -78,6 +78,10 @@ namespace NOrders
 
         internal static bool HasWellDeck(Ship ship) => Deck(ship) != null;
 
+        // Where craft leave the hold: its deploy point, or the door.
+        internal static Transform DoorOf(UnitStorage hold) =>
+            hold == null ? null : DeployTransform?.GetValue(hold) as Transform ?? hold.GetDoorTransform();
+
         internal static UnitDefinition Lookup(string key) =>
             key != null && Encyclopedia.Lookup != null && Encyclopedia.Lookup.TryGetValue(key, out UnitDefinition found) ? found : null;
 
@@ -97,7 +101,7 @@ namespace NOrders
             foreach (UnitCount entry in deck.Hold.GetStoredList())
             {
                 UnitDefinition type = Lookup(entry.UnitType);
-                if (type == null || type == deck.Craft || entry.Count <= 0) continue;
+                if (type == null || type == deck.Craft || entry.Count <= 0 || Kamikaze.IsType(type)) continue;
                 list.Add(new KeyValuePair<UnitDefinition, int>(type, entry.Count));
             }
             list.Sort((a, b) => string.CompareOrdinal(a.Key.unitName, b.Key.unitName));

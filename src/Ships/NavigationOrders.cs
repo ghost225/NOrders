@@ -38,6 +38,7 @@ namespace NOrders
         public static bool ReplaceWaypoint(Ship ship, GlobalPosition waypoint, out string reason)
         {
             TaskForces.NoteOrder(ship);
+            Kamikaze.Forget(ship);
             if (!CommandableShip.Finite(waypoint)) { reason = "That waypoint is invalid."; return false; }
             var state = State(ship, out reason);
             if (state == null) return false;
@@ -49,6 +50,7 @@ namespace NOrders
         public static bool AppendWaypoint(Ship ship, GlobalPosition waypoint, out string reason)
         {
             TaskForces.NoteOrder(ship);
+            Kamikaze.Forget(ship);
             if (!CommandableShip.Finite(waypoint)) { reason = "That waypoint is invalid."; return false; }
             var state = State(ship, out reason);
             if (state == null) return false;
