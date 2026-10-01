@@ -29,6 +29,8 @@ namespace NOrders
         private const float TaxiSlow = 6f;          // m/s relative to the deck
 
         private static readonly Dictionary<Aircraft, float> restingSince = new Dictionary<Aircraft, float>();
+        private static readonly Dictionary<Aircraft, (float at, Ship ship)> exiting = new Dictionary<Aircraft, (float, Ship)>();
+        private const float CrewOut = 7f;           // seconds from the crew starting out to the airframe's return
         private static readonly System.Reflection.FieldInfo ToRunway = HarmonyLib.AccessTools.Field(typeof(AIPilotTaxiState), "toRunway");
         private static float nextSweep;
 
@@ -54,7 +56,7 @@ namespace NOrders
                 // just brought up, sitting still on the deck for its takeoff
                 // clearance, was taken for one that had landed and recovered
                 // before it ever flew -- one of a wing of four off an Annex.
-                if (pilot == null || !pilot.flightInfo.HasTakenOff) continue;
+                if (pilot == null || !pilot.flightInfo.HasTakenOff || exiting.ContainsKey(aircraft)) continue;
                 if (state is AIPilotTaxiState taxi && ToRunway != null && (bool)ToRunway.GetValue(taxi)) continue;
                 // Down on any ship's deck in the taxi state (held braking by
                 // DeckNoTaxiPatch): recovered as soon as it has slowed, moving
@@ -69,13 +71,31 @@ namespace NOrders
                 seen.Remove(aircraft);
                 recover.Add((aircraft, ship));
             }
+            // The crew get out first, the game's own way -- canopy, then each
+            // of them, a few seconds in all -- and the airframe is returned a
+            // moment after. The game returns it itself only under 2 m/s over
+            // the ground, which a deck under way never is.
             foreach ((Aircraft aircraft, Ship ship) in recover)
             {
+                if (exiting.ContainsKey(aircraft)) continue;
+                exiting[aircraft] = (Time.timeSinceLevelLoad, ship);
+                if (!aircraft.HasEjected()) aircraft.StartEjectionSequence();
                 Host.LogInfo("[deck] " + (FlightOrders.Of(aircraft)?.Name ?? aircraft.definition?.unitName ?? aircraft.name) +
-                    " recovered aboard " + ShipNames.Of(ship));
+                    " · crew out aboard " + ShipNames.Of(ship));
+            }
+            var returned = new List<Aircraft>();
+            foreach (KeyValuePair<Aircraft, (float at, Ship ship)> entry in exiting)
+            {
+                Aircraft aircraft = entry.Key;
+                if (aircraft == null || aircraft.disabled) { returned.Add(aircraft); continue; }
+                if (Time.timeSinceLevelLoad - entry.Value.at < CrewOut) continue;
+                returned.Add(aircraft);
+                Host.LogInfo("[deck] " + (FlightOrders.Of(aircraft)?.Name ?? aircraft.definition?.unitName ?? aircraft.name) +
+                    " recovered aboard " + ShipNames.Of(entry.Value.ship));
                 aircraft.NetworkunitState = Unit.UnitState.Abandoned;
                 aircraft.ReturnToInventory();
             }
+            foreach (Aircraft aircraft in returned) exiting.Remove(aircraft);
             var gone = new List<Aircraft>();
             foreach (Aircraft aircraft in restingSince.Keys) if (!seen.Contains(aircraft)) gone.Add(aircraft);
             foreach (Aircraft aircraft in gone) restingSince.Remove(aircraft);
