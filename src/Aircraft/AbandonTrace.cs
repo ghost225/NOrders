@@ -28,6 +28,10 @@ namespace NOrders
             Pilot pilot = FlightOrders.FirstPilot(aircraft);
             PilotBaseState state = pilot?.currentState;
             if (pilot != null && pilot.flightInfo.HasTakenOff) return;      // an ejection in flight is its own story
+            // With no pilot left to ask, by the aircraft itself: one high or
+            // fast is in flight -- a Vagrant shot down at 287 m/s was logged
+            // "abandoned on the ground before take-off" and lost its bonus.
+            if (aircraft.radarAlt > 5f || aircraft.speed > 30f) return;
             flight.AbandonedOnGround = true;                               // no sortie bonus for this one
 
             float roll = aircraft.cockpit != null ? Mathf.Asin(Mathf.Clamp(Vector3.Dot(aircraft.cockpit.xform.right, Vector3.up), -1f, 1f)) * Mathf.Rad2Deg : 0f;
