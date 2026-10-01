@@ -178,3 +178,43 @@ namespace NOrders
         }
     }
 }
+
+namespace NOrders
+{
+    // Brakes on the whole way in to a ship's deck: from the turn to final,
+    // through the approach and the touchdown, wheel brakes (and speedbrakes,
+    // on airframes whose brake input works them) held on; on the deck,
+    // throttle closed as well. The game gives an aircraft with a tail hook
+    // full throttle and no brakes for its first three seconds on a deck --
+    // power for a bolter -- and with nothing to catch the hook that ran
+    // F-16s and Eclipses off the bow. Not while going round. A fix to the
+    // game's behaviour, so Ownership.Acts on the ship.
+    [HarmonyPatch(typeof(AIPilotLandingState), nameof(AIPilotLandingState.FixedUpdateState))]
+    internal static class DeckBrakesPatch
+    {
+        private const string Name = "Deck brakes";
+        private static readonly FieldInfo Mode = AccessTools.Field(typeof(AIPilotLandingState), "landingMode");
+        private static readonly FieldInfo Base = AccessTools.Field(typeof(AIPilotLandingState), "airbase");
+        private const int TurningToFinal = 1, StabilizedApproach = 2, VerticalTouchdown = 3, TouchedDown = 4;
+
+        private static void Postfix(AIPilotLandingState __instance, Pilot pilot)
+        {
+            if (Mode == null || Base == null || !Guard.Ok(Name)) return;
+            try
+            {
+                Aircraft aircraft = pilot?.aircraft;
+                if (aircraft == null || aircraft.Player != null || !aircraft.IsServer) return;
+                if (!(Base.GetValue(__instance) is Airbase airbase) || !airbase.AttachedAirbase) return;
+                int mode = Convert.ToInt32(Mode.GetValue(__instance));
+                if (mode != TurningToFinal && mode != StabilizedApproach && mode != VerticalTouchdown && mode != TouchedDown) return;
+                Ship ship = Airfields.ShipOf(airbase);
+                if (ship == null || !Ownership.Acts(ship)) return;
+                ControlInputs inputs = aircraft.GetInputs();
+                if (inputs == null) return;
+                inputs.brake = 1f;
+                if (mode == TouchedDown) inputs.throttle = 0f;
+            }
+            catch (Exception ex) { Guard.Failed(Name, ex); }
+        }
+    }
+}
