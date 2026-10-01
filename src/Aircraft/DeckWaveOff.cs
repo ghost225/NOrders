@@ -33,7 +33,7 @@ namespace NOrders
         private static readonly FieldInfo Base = AccessTools.Field(typeof(AIPilotLandingState), "airbase");
         private static readonly MethodInfo Switch = AccessTools.Method(typeof(AIPilotLandingState), "SwitchMode");
 
-        private const int JoiningPattern = 0, TurningToFinal = 1, StabilizedApproach = 2, Aborting = 5;
+        private const int JoiningPattern = 0, TurningToFinal = 1, StabilizedApproach = 2, VerticalTouchdown = 3, TouchedDown = 4, Aborting = 5;
         private const float DeckSwing = 15f;
 
         // A deck is steady once its heading has stayed within a few degrees
@@ -61,6 +61,46 @@ namespace NOrders
         }
 
         internal static bool Steady(Ship ship) => SteadyTime(ship) >= SteadyFor;
+
+        // An aircraft other than `except` on the approach to this field --
+        // turning to final, on final, touching down -- or null.
+        internal static Aircraft OnApproach(Airbase airbase, Aircraft except)
+        {
+            if (Mode == null || Base == null || airbase == null) return null;
+            foreach (Unit unit in UnitRegistry.allUnits)
+            {
+                if (!(unit is Aircraft aircraft) || aircraft == except || aircraft.disabled) continue;
+                if (!(FlightOrders.FirstPilot(aircraft)?.currentState is AIPilotLandingState landing)) continue;
+                if (!ReferenceEquals(Base.GetValue(landing), airbase)) continue;
+                int mode = Convert.ToInt32(Mode.GetValue(landing));
+                if (mode == TurningToFinal || mode == StabilizedApproach || mode == VerticalTouchdown || mode == TouchedDown) return aircraft;
+            }
+            return null;
+        }
+
+        // On the ground at the end of a landing, rolling out.
+        internal static bool Touchdown(AIPilotLandingState landing)
+        {
+            if (Mode == null || landing == null) return false;
+            int mode = Convert.ToInt32(Mode.GetValue(landing));
+            return mode == VerticalTouchdown || mode == TouchedDown;
+        }
+
+        // The game's landing phase, in words, for the status.
+        internal static string Phase(AIPilotLandingState landing)
+        {
+            if (Mode == null || landing == null) return null;
+            switch (Convert.ToInt32(Mode.GetValue(landing)))
+            {
+                case JoiningPattern: return "JOINING THE PATTERN";
+                case TurningToFinal: return "TURNING FINAL";
+                case StabilizedApproach: return "ON FINAL";
+                case VerticalTouchdown: return "TOUCHING DOWN";
+                case TouchedDown: return "TOUCHED DOWN";
+                case Aborting: return "GOING ROUND";
+            }
+            return null;
+        }
 
         private static readonly Dictionary<Aircraft, float> headingAtTurnIn = new Dictionary<Aircraft, float>();
         private static readonly Dictionary<Flight, float> wavedOff = new Dictionary<Flight, float>();

@@ -305,6 +305,11 @@ namespace NOrders
                 if (activity != null && Time.timeSinceLevelLoad < activityUntil) return activity + (Mode == FlightMode.Strike ? ListProgress() : "");
                 if (Mode == FlightMode.Egress) return "EGRESSING" + ListProgress();
                 if (Mode == FlightMode.Orbit && StrikeList.Count > 0) return "HOLDING · missiles on the way" + ListProgress();
+                if (Aircraft != null && FlightOrders.FirstPilot(Aircraft)?.currentState is AIPilotLandingState landing)
+                {
+                    string phase = DeckWaveOff.Phase(landing);
+                    if (phase != null) return "LANDING · " + phase;
+                }
                 if (Wings.FormingUp(this, out int waitingOn)) return "FORMING UP" + (waitingOn > 0 ? " · waiting for " + waitingOn : "");
                 if (Wings.Joining(this, out float off)) return "JOINING · " + UnitConverter.DistanceReading(off);
                 return null;
@@ -630,6 +635,7 @@ namespace NOrders
             Guard.Run("Fixed-wing drops", FixedWingDrops.Forget);
             Guard.Run("Ejection", EjectionCheck.Tick);
             Guard.Run("Turnaround", Turnaround.Tick);
+            Guard.Run("Recovery queue", RecoveryQueue.Tick);
             for (int i = flights.Count - 1; i >= 0; i--)
                 if (flights[i].Aircraft == null || flights[i].Aircraft.disabled) flights.RemoveAt(i);
             foreach (Flight flight in flights)

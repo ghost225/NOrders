@@ -1249,29 +1249,48 @@ namespace NOrders
             NativePilot.Wake(combat, aircraft);
         }
 
-        // Home to a ship that is turning: hold overhead until the deck has
-        // settled, then hand over to the game's approach. Jets only -- a
-        // helicopter comes straight down onto the spot whatever the heading --
-        // and never on the last of the fuel.
+        // Home, in order (RecoveryQueue): a fixed-wing flight flies back to
+        // its field itself, joins the marshal stack overhead within range, and
+        // is handed to the game's approach only when cleared -- one at a time,
+        // and never to a ship that is turning (DeckWaveOff). Helicopters land
+        // on their own pads and go straight to the game's landing.
         private bool marshalling;
         private void FlyHome(Pilot pilot)
         {
-            Ship deck = flight.Parent;
-            if (deck != null && !deck.disabled && Ownership.Acts(deck) && aircraft.autopilot is AutopilotPlane &&
-                aircraft.GetFuelLevel() > 0.08f && !DeckWaveOff.Steady(deck))
+            Airbase field = flight.Home;
+            if (field == null || field.disabled || !(aircraft.autopilot is AutopilotPlane))
             {
-                if (!marshalling)
-                {
-                    marshalling = true;
-                    Host.LogInfo("[flight] " + flight.Name + " · marshalling over " + ShipNames.Of(deck) + " until the deck steadies");
-                    Host.Say(flight.Name + " · marshalling, " + ShipNames.Of(deck) + " turning");
-                }
-                flight.Doing("MARSHALLING · " + ShipNames.Of(deck) + " turning");
-                FlyOrbit(deck.GlobalPosition(), 3000f);
+                marshalling = false;
+                HandBackToLanding(pilot);
                 return;
             }
-            marshalling = false;
-            HandBackToLanding(pilot);
+            GlobalPosition centre = Airfields.PositionOf(field);
+            float distance = Horizontal(centre, aircraft.GlobalPosition());
+            string name = Airfields.NameOf(field);
+            if (distance > RecoveryQueue.MarshalRange)
+            {
+                flight.Doing("RETURNING · " + UnitConverter.DistanceReading(distance) + " to " + name);
+                Steer(centre);
+                return;
+            }
+            if (RecoveryQueue.Cleared(flight, field, out int place, out string why))
+            {
+                if (marshalling) Host.LogInfo("[flight] " + flight.Name + " · leaving the marshal, cleared to land on " + name);
+                marshalling = false;
+                HandBackToLanding(pilot);
+                return;
+            }
+            if (!marshalling)
+            {
+                marshalling = true;
+                Host.LogInfo("[flight] " + flight.Name + " · marshalling over " + name + (why != null ? " · " + why : ""));
+            }
+            // The stack: the next to land lowest, each after it higher.
+            float ordered = flight.Altitude;
+            flight.Altitude = RecoveryQueue.MarshalBase + Mathf.Max(place - 1, 0) * RecoveryQueue.MarshalStep;
+            flight.Doing("MARSHAL · " + (place > 0 ? "#" + place + " to land" : "holding") + (why != null ? " · " + why : "") + " · " + name);
+            FlyOrbit(centre, RecoveryQueue.MarshalRadius);
+            flight.Altitude = ordered;
         }
 
         private void HandBackToLanding(Pilot pilot)
