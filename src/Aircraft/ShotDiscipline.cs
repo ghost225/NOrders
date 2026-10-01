@@ -194,6 +194,11 @@ namespace NOrders
             foreach (Unit unit in UnitRegistry.allUnits)
             {
                 if (!(unit is Missile missile) || missile.disabled || missile.NetworkHQ != hq || missile.targetID != target.persistentID) continue;
+                // Only what aircraft have fired: a ship's SAM or a ground
+                // launcher's shot is a separate layer, often decoyed or shot
+                // down, and counting it grounded a wing -- one Scythe and one
+                // sea-launched missile filled an aircraft's allowance of two.
+                if (!(missile.owner is Aircraft)) continue;
                 if (!firstSeen.TryGetValue(missile, out float seen)) firstSeen[missile] = seen = now;
                 if (now - seen > CountsFor) continue;
                 Vector3 toTarget = target.GlobalPosition() - missile.GlobalPosition();
