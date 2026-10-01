@@ -179,7 +179,10 @@ namespace NOrders
                 // the formation every few seconds to "recover".
                 if (slow && flight.Mode == FlightMode.Formation && parameters != null && parameters.takeoffSpeed > 0f)
                     slow = aircraft.speed < parameters.takeoffSpeed * 1.1f;
-                bool low = aircraft.radarAlt < 150f && flight.Mode != FlightMode.Egress && flight.Mode != FlightMode.Strike;
+                // A wingman follows its lead's height, which may be low on
+                // purpose; it is only "low" close to the ground.
+                bool low = aircraft.radarAlt < (flight.Mode == FlightMode.Formation ? 60f : LowBar) &&
+                           flight.Mode != FlightMode.Egress && flight.Mode != FlightMode.Strike;
                 if ((slow || low) && !flight.EvadingInfrared)
                 {
                     controlInputs.throttle = 1f;
@@ -193,8 +196,11 @@ namespace NOrders
                     // Low: climb, but no more than 300 m above where it is.
                     // Slow but high enough: ease down, trading height for speed
                     // -- climbing bled it further.
+                    // The climb always clears the low bar: capped at the ordered
+                    // height alone, a wingman whose ordered height read 0 held
+                    // at 53 m -- still "low" -- and flew straight on for 30 km.
                     flight.Altitude = low
-                        ? Mathf.Clamp(aircraft.radarAlt + 300f, MinimumClearance, Mathf.Max(ordered, MinimumClearance))
+                        ? Mathf.Clamp(aircraft.radarAlt + 300f, LowBar + 150f, Mathf.Max(ordered, LowBar + 150f))
                         : Mathf.Max(aircraft.radarAlt - 150f, MinimumClearance);
                     flight.Doing("RECOVERING ENERGY");
                     if (recoveringSince < 0f) { recoveringSince = Time.timeSinceLevelLoad; Tracing.Flight("[flight] " + flight.Name + " · recovering energy · " + aircraft.speed.ToString("0") + " m/s (bar " + bar.ToString("0") + ") at " + aircraft.radarAlt.ToString("0") + " m"); }
@@ -813,6 +819,8 @@ namespace NOrders
         // would be flown by a method with an empty body.
         // The speed below which a fixed-wing aircraft of ours is too slow to
         // fly its orders: see the energy recovery. 0 when nothing is known.
+        private const float LowBar = 150f;
+
         private float SlowBar()
         {
             if (parameters == null) return 0f;
