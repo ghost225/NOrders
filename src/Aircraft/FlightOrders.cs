@@ -240,7 +240,7 @@ namespace NOrders
             foreach (string key in gone) { eventAt.Remove(key); acknowledged.Remove(key); }
         }
 
-        // Short enough for a chip: "A/S 0  A/A 4  GUN 240".
+        // Short enough for a chip: "A/G 0  A/A 4  GUN 240".
         public string StoresSummary
         {
             get
@@ -588,7 +588,7 @@ namespace NOrders
             return result;
         }
 
-        internal static readonly string[] RoleOrder = { "A/S", "A/A", "ARM", "PD", "GUN" };
+        internal static readonly string[] RoleOrder = { "A/G", "A/A", "ARM", "PD", "GUN" };
 
         // Which job this weapon is for, from the game's own effectiveness
         // profile rather than a list of weapon names.
@@ -598,7 +598,7 @@ namespace NOrders
             if (info.gun) return "GUN";
             RoleIdentity role = info.effectiveness;
             float best = role.antiSurface;
-            string label = "A/S";
+            string label = "A/G";
             if (role.antiAir > best) { best = role.antiAir; label = "A/A"; }
             if (role.antiRadar > best) { best = role.antiRadar; label = "ARM"; }
             if (role.antiMissile > best) { best = role.antiMissile; label = "PD"; }
