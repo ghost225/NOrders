@@ -1051,6 +1051,38 @@ namespace NOrders
                     : " · climbing to " + (loft / 1000f).ToString("0") + " km");
             if (note != bvrNote) { bvrNote = note; Tracing.Flight("[flight] " + flight.Name + " · intercept · " + note); }
 
+            // Enough of ours on it already. The shot is one aircraft's to take
+            // per missile allowed, in callsign order; the rest of the wing
+            // covers -- and one that has fired, with the target's full count
+            // of missiles closing, is done: before, it waited for the rest of
+            // a salvo that discipline would never let it fire, pressing in
+            // for ever, while its wingmen all read LAUNCHING.
+            int allowed = ShotDisciplinePatch.AllowedOn(flight, target, info);
+            int closing = ShotDisciplinePatch.Closing(hq, target);
+            bool fired = flight.AmmoAtAttack >= 0 && FlightOrders.TotalAmmo(aircraft) < flight.AmmoAtAttack;
+            if (closing >= allowed && fired)
+            {
+                flight.SalvoLeft = 0;
+                CompleteRunIn(pilot, closing + " missile(s) closing, its shot taken");
+                return;
+            }
+            string shooter = closing >= allowed ? null : ShotTakenBy(target, allowed - closing);
+            if (closing >= allowed || shooter != null)
+            {
+                flight.Doing("COVERING · " + (shooter != null ? shooter + " has the shot" : closing + " missile(s) closing on " + ShipNames.Of(target)));
+                // Hold off at standoff: a circle round where it began covering,
+                // at height, for as long as it waits (the intercept's own
+                // time limit is not run down meanwhile).
+                if (!covering) { covering = true; coverCentre = here - toTarget.normalized * 1000f; }
+                flight.RunInStarted = Time.timeSinceLevelLoad;
+                float held = flight.Altitude;
+                flight.Altitude = Mathf.Max(here.y - ground, MinimumClearance);
+                FlyOrbit(coverCentre, 3000f);
+                flight.Altitude = held;
+                return;
+            }
+            covering = false;
+
             flight.Doing(range > launchAt
                 ? (bvrClosingIn ? "CLOSING IN AT " + (BvrHold / 1000f).ToString("0") + " km" : clear ? "PRESSING IN · " + UnitConverter.DistanceReading(range) : "CLIMBING TO LAUNCH · " + (loft / 1000f).ToString("0") + " km")
                 : "LAUNCHING · " + UnitConverter.DistanceReading(range));
@@ -1059,6 +1091,18 @@ namespace NOrders
             try
             {
                 if (range > launchAt) { Steer(known); return; }
+
+                // A target well below the nose -- high over a low helicopter --
+                // never comes into the launch cone flying level at the loft
+                // height: give the height up and point at it.
+                float coneLimit = needs.minAlignment > 0f ? needs.minAlignment : 30f;
+                Vector3 flatTo = toTarget; flatTo.y = 0f;
+                float below = Mathf.Atan2(here.y - known.y, Mathf.Max(flatTo.magnitude, 1f)) * Mathf.Rad2Deg;
+                if (below > coneLimit * 0.6f)
+                {
+                    flight.Altitude = Mathf.Max(known.y - ground + 300f, MinimumClearance);
+                    flight.Doing("LAUNCHING · nose down · " + UnitConverter.DistanceReading(range));
+                }
 
                 float corner = parameters != null ? parameters.cornerSpeed : 0f;
                 if (corner > 0f && aircraft.speed < corner * 1.15f)
@@ -1073,7 +1117,7 @@ namespace NOrders
                 if (off > cone * 0.9f || Time.timeSinceLevelLoad - flight.LastLaunchAt < 2.5f) return;
                 if (aircraft.speed < needs.minOwnerSpeed) return;
 
-                if (flight.SalvoLeft <= 0) flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
+                if (flight.SalvoLeft <= 0) flight.SalvoLeft = Mathf.Clamp(allowed - closing, 1, Mathf.Max(station.Ammo, 1));
                 aircraft.weaponManager.currentWeaponStation = station;
                 List<Unit> targets = aircraft.weaponManager.GetTargetList();
                 targets.Clear();
@@ -1182,6 +1226,15 @@ namespace NOrders
             if (flight.InLaunchRangeSince < 0f) flight.InLaunchRangeSince = Time.timeSinceLevelLoad;
             if (Time.timeSinceLevelLoad - flight.InLaunchRangeSince > 60f) { CompleteRunIn(pilot, "no launch in a minute"); return; }
 
+            // Its shot taken and the target's full count of missiles closing
+            // (some of them a wingman's): the salvo is done, egress.
+            if (saturation == null && flight.AmmoAtAttack >= 0 && FlightOrders.TotalAmmo(aircraft) < flight.AmmoAtAttack &&
+                ShotDisciplinePatch.Closing(aircraft.NetworkHQ, target) >= ShotDisciplinePatch.AllowedOn(flight, target, info))
+            {
+                flight.SalvoLeft = 0;
+                return;
+            }
+
             // Speed before the shot: a loaded fighter that fired at 74 m/s went
             // straight into the sea. Below 1.15 times corner speed it flies on
             // at full power and lines up when it has the speed back.
@@ -1227,6 +1280,31 @@ namespace NOrders
             }
             if (station.Ammo <= 0) flight.SalvoLeft = 0;
             if (saturation != null) flight.SalvoLeft = StrikePlans.SaturationRounds(aircraft, saturation);
+        }
+
+        // Who in the wing takes the shot at this target: the first `shots`
+        // members, in callsign order, striking it with something that can
+        // reach it and not yet done. Null when this aircraft is one of them;
+        // otherwise the name of the first that is.
+        private bool covering;
+        private GlobalPosition coverCentre;
+
+        private string ShotTakenBy(Unit target, int shots)
+        {
+            if (flight.Wing == null || shots <= 0) return null;
+            int ahead = 0;
+            string first = null;
+            foreach (Flight member in Wings.Members(flight.Wing))
+            {
+                if (member == flight) return ahead < shots ? null : first;
+                if (member.Aircraft == null || member.Aircraft.disabled || member.Mode != FlightMode.Strike || member.Target != target) continue;
+                if (FlightOrders.BestStationFor(member.Aircraft, target) == null) continue;
+                bool done = member.AmmoAtAttack >= 0 && FlightOrders.TotalAmmo(member.Aircraft) < member.AmmoAtAttack;
+                if (done) continue;
+                if (first == null) first = member.Name;
+                ahead++;
+            }
+            return null;
         }
 
         private void CompleteRunIn(Pilot pilot, string why)
