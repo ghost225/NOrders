@@ -94,6 +94,7 @@ namespace NOrders
                 int live = Closing(aircraft.NetworkHQ, target);
                 if (live < allowed)
                 {
+                    Fired(aircraft.NetworkHQ, target);              // the next ask counts this shot
                     // A ripple weapon fires the whole list in one salvo, and
                     // the combat AI lists the target once per attack it wants:
                     // a Scimitar rack went at one Cricket. The list is cut to
@@ -185,10 +186,28 @@ namespace NOrders
         private static readonly Dictionary<Missile, float> firstSeen = new Dictionary<Missile, float>();
         private const float CountsFor = 120f;    // a missile two minutes out is not arriving
 
+        // Asked per fire attempt, and a held shot is attempted again every
+        // physics step: the count is kept a fifth of a second per target
+        // rather than walking every unit each time.
+        private static readonly Dictionary<(FactionHQ, Unit), (int count, float at)> closingCache = new Dictionary<(FactionHQ, Unit), (int, float)>();
+
         internal static int Closing(FactionHQ hq, Unit target)
         {
-            int live = 0;
             if (hq == null || target == null) return 0;
+            float at = Time.timeSinceLevelLoad;
+            if (closingCache.TryGetValue((hq, target), out var cached) && at - cached.at < 0.2f && at >= cached.at) return cached.count;
+            int count = Count(hq, target);
+            if (closingCache.Count > 200) closingCache.Clear();
+            closingCache[(hq, target)] = (count, at);
+            return count;
+        }
+
+        // A shot just fired counts at once, not a fifth of a second later.
+        internal static void Fired(FactionHQ hq, Unit target) { if (hq != null && target != null) closingCache.Remove((hq, target)); }
+
+        private static int Count(FactionHQ hq, Unit target)
+        {
+            int live = 0;
             float now = Time.timeSinceLevelLoad;
             if (firstSeen.Count > 500) firstSeen.Clear();
             foreach (Unit unit in UnitRegistry.allUnits)

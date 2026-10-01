@@ -78,7 +78,7 @@ namespace NOrders
                 turret.SetManual(false);
                 return;
             }
-            turret.SetManual(true);
+            state.Hold(turret);
         }
 
         public static string Describe(EngagementMode mode) =>
@@ -144,6 +144,36 @@ namespace NOrders
         private float nextSweep, nextThreatScan;
         private readonly HashSet<uint> attackers = new HashSet<uint>();
         private readonly List<Unit> inbound = new List<Unit>();
+
+        // Turrets this policy holds on manual, and only those are released.
+        // A turret asleep with nothing to do is woken by any SetManual call:
+        // releasing every turret on the ship each second (and four times a
+        // second under Tight or Hold) kept every mount of every engaged ship
+        // awake and searching -- costly in a big fleet action.
+        private readonly HashSet<Turret> held = new HashSet<Turret>();
+        private Turret[] turrets;
+        private float turretsAt = -100f;
+
+        internal void Hold(Turret turret)
+        {
+            turret.SetManual(true);
+            held.Add(turret);
+        }
+
+        private void Free(Turret turret)
+        {
+            if (held.Remove(turret)) turret.SetManual(false);
+        }
+
+        private Turret[] Turrets()
+        {
+            if (turrets == null || Time.timeSinceLevelLoad - turretsAt > 10f)
+            {
+                turrets = ship.GetComponentsInChildren<Turret>(true);
+                turretsAt = Time.timeSinceLevelLoad;
+            }
+            return turrets;
+        }
 
         internal EngagementMode Mode = EngagementMode.WeaponsFree;
         internal readonly Dictionary<string, EngagementMode> PerWeapon = new Dictionary<string, EngagementMode>();
@@ -224,26 +254,28 @@ namespace NOrders
 
         private void Sweep()
         {
-            foreach (Turret turret in ship.GetComponentsInChildren<Turret>(true))
+            foreach (Turret turret in Turrets())
             {
                 if (turret == null || turret.GetAttachedUnit() != ship) continue;
                 // A mount carrying one of our explicit orders is not the policy's business.
                 if (ShipWeapons.Holds(ship, turret)) continue;
                 Unit target = turret.GetTarget();
-                if (Sanctioned(turret, target)) { turret.SetManual(false); continue; }
+                if (Sanctioned(turret, target)) { Free(turret); continue; }
+                if (held.Contains(turret)) continue;           // already held; no need to wake it again
                 if (NativeBindings.TurretChooseTarget != null)
                     NativeBindings.TurretChooseTarget.Invoke(turret, new object[] { true });
-                turret.SetManual(true);
+                Hold(turret);
             }
         }
 
         private void ReleaseAll()
         {
-            foreach (Turret turret in ship.GetComponentsInChildren<Turret>(true))
+            if (held.Count == 0) return;
+            foreach (Turret turret in new List<Turret>(held))
             {
-                if (turret == null || turret.GetAttachedUnit() != ship) continue;
+                if (turret == null) { held.Remove(turret); continue; }
                 if (ShipWeapons.Holds(ship, turret)) continue;
-                turret.SetManual(false);
+                Free(turret);
             }
         }
     }

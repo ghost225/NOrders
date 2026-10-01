@@ -152,8 +152,13 @@ namespace NOrders
         internal readonly Dictionary<string, int> RoleStores = new Dictionary<string, int>();
         internal readonly Dictionary<string, int> RolePeak = new Dictionary<string, int>();
 
+        private float storesAt = -100f;
+
+        // Twice a second is plenty for a readout; it was every frame.
         internal void RefreshStores()
         {
+            if (Time.unscaledTime - storesAt < 0.5f && Time.unscaledTime >= storesAt) return;
+            storesAt = Time.unscaledTime;
             RoleStores.Clear();
             if (Aircraft == null || Aircraft.weaponStations == null) return;
             foreach (WeaponStation station in Aircraft.weaponStations)
@@ -179,11 +184,21 @@ namespace NOrders
         // Not a weapon: a drop tank or cargo. Counted as one, a jettisoned
         // empty tank read as a role run dry, and flagged the flight for
         // attention with nothing wrong.
+        // The prefab search is kept per weapon type: this is asked for every
+        // station of every flight, every frame.
+        private static readonly Dictionary<WeaponInfo, bool> tankTypes = new Dictionary<WeaponInfo, bool>();
+
         internal static bool IsStore(WeaponStation station)
         {
             if (station.Cargo) return true;
-            GameObject prefab = station.WeaponInfo.weaponPrefab;
-            return prefab != null && prefab.GetComponentInChildren<FuelTank>(true) != null;
+            WeaponInfo info = station.WeaponInfo;
+            if (info == null) return false;
+            if (!tankTypes.TryGetValue(info, out bool tank))
+            {
+                GameObject prefab = info.weaponPrefab;
+                tankTypes[info] = tank = prefab != null && prefab.GetComponentInChildren<FuelTank>(true) != null;
+            }
+            return tank;
         }
 
         // Why a flight needs attention, or null when it doesn't. Nothing here

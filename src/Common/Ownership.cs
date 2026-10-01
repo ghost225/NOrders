@@ -16,11 +16,12 @@ namespace NOrders
         public static bool Claim(Unit unit)
         {
             if (unit == null) return false;
-            string owner = OwnerOf(unit);
-            if (owner != null) return owner == Host.ModId;
+            string owner = Read(unit);                      // fresh, never the cache: two mods must not both claim
+            if (owner != null) { owners[unit] = (owner, Time.unscaledTime); return owner == Host.ModId; }
             var marker = new GameObject(Prefix + Host.ModId);
             marker.transform.SetParent(unit.transform, false);
             marker.SetActive(false);                        // no cost, nothing to render
+            owners[unit] = (Host.ModId, Time.unscaledTime);
             StripForeign(unit);
             return true;
         }
@@ -50,13 +51,43 @@ namespace NOrders
             if (marker == null || marker.name != Prefix + Host.ModId) return;
             marker.name = "__NOrders.Released";                // gone now, not at the end of the frame
             Object.Destroy(marker.gameObject);
+            owners.Remove(unit);
         }
 
         // The ModId of the mod that owns the unit, or null.
+        //
+        // Read off the unit's children, which is not cheap -- a name read and
+        // a compare per child -- and asked for every unit, missiles and all,
+        // by the sweeps and by every patch that acts on units no mod owns.
+        // So the answer is kept for half a second; this mod's own claims and
+        // releases update it at once, and another mod's show within that.
+        private static readonly System.Collections.Generic.Dictionary<Unit, (string owner, float at)> owners =
+            new System.Collections.Generic.Dictionary<Unit, (string, float)>();
+        private const float OwnerFresh = 0.5f;
+
         public static string OwnerOf(Unit unit)
+        {
+            if (unit == null) return null;
+            float now = Time.unscaledTime;
+            if (owners.TryGetValue(unit, out var known) && now - known.at < OwnerFresh) return known.owner;
+            string owner = Read(unit);
+            if (owners.Count > 4000) Prune();
+            owners[unit] = (owner, now);
+            return owner;
+        }
+
+        private static string Read(Unit unit)
         {
             Transform marker = Marker(unit);
             return marker != null ? marker.name.Substring(Prefix.Length) : null;
+        }
+
+        private static void Prune()
+        {
+            var gone = new System.Collections.Generic.List<Unit>();
+            float now = Time.unscaledTime;
+            foreach (var entry in owners) if (entry.Key == null || entry.Key.disabled || now - entry.Value.at > 10f) gone.Add(entry.Key);
+            foreach (Unit unit in gone) owners.Remove(unit);
         }
 
         public static bool Mine(Unit unit) => unit != null && OwnerOf(unit) == Host.ModId;
@@ -76,23 +107,28 @@ namespace NOrders
         // The first NOrders mod to ask becomes the steward for the session:
         // a scene-independent marker object names it.
         private const string StewardName = "__NOrders.Steward";
-        private static int stewardChecked = -1;
+        private static GameObject stewardHolder;
+        private static float stewardAt = -100f;
         private static bool steward;
 
+        // The marker object outlives scenes, so once found it is kept: a
+        // GameObject.Find walks every object in the scene, and this was asked
+        // once a frame whenever an AI aircraft landed or taxied on a ship.
         public static bool Steward
         {
             get
             {
-                if (stewardChecked == Time.frameCount) return steward;
-                stewardChecked = Time.frameCount;
-                GameObject holder = GameObject.Find(StewardName);
-                if (holder == null)
+                float now = Time.unscaledTime;
+                if (stewardHolder != null && now - stewardAt < 5f) return steward;
+                stewardAt = now;
+                if (stewardHolder == null) stewardHolder = GameObject.Find(StewardName);
+                if (stewardHolder == null)
                 {
-                    holder = new GameObject(StewardName);
-                    Object.DontDestroyOnLoad(holder);
-                    new GameObject(Host.ModId).transform.SetParent(holder.transform, false);
+                    stewardHolder = new GameObject(StewardName);
+                    Object.DontDestroyOnLoad(stewardHolder);
+                    new GameObject(Host.ModId).transform.SetParent(stewardHolder.transform, false);
                 }
-                steward = holder.transform.childCount > 0 && holder.transform.GetChild(0).name == Host.ModId;
+                steward = stewardHolder.transform.childCount > 0 && stewardHolder.transform.GetChild(0).name == Host.ModId;
                 return steward;
             }
         }
@@ -153,6 +189,7 @@ namespace NOrders
         // dropped and remade, so nothing can claim the unit in between.
         internal static void Transfer(Unit unit, string to)
         {
+            owners.Remove(unit);
             if (unit == null || string.IsNullOrEmpty(to)) return;
             Transform marker = Marker(unit);
             if (marker == null)
@@ -174,13 +211,17 @@ namespace NOrders
         {
             if (Time.unscaledTime < nextService) return;
             nextService = Time.unscaledTime + 0.5f;
-            foreach (Unit unit in new System.Collections.Generic.List<Unit>(UnitRegistry.allUnits))
+            // Ships are what gets handed over; the rest -- missiles above
+            // all -- are not looked at.
+            var asked = new System.Collections.Generic.List<(Unit unit, string by)>();
+            foreach (Unit unit in UnitRegistry.allUnits)
             {
-                if (unit == null || !Mine(unit)) continue;
+                if (!(unit is Ship) || unit.disabled || !Mine(unit)) continue;
                 string requester = RequestedBy(unit, out bool player);
                 if (requester == null || !player || requester == Host.ModId) continue;
-                Yield(unit, requester);
+                asked.Add((unit, requester));
             }
+            foreach (var request in asked) Yield(request.unit, request.by);
         }
 
         private static void Yield(Unit unit, string requester)
@@ -204,7 +245,7 @@ namespace NOrders
             for (int i = 0; i < root.childCount; i++)
             {
                 Transform child = root.GetChild(i);
-                if (child != null && child.name.StartsWith(RequestPrefix)) return child;
+                if (child != null && child.name.StartsWith(RequestPrefix, System.StringComparison.Ordinal)) return child;
             }
             return null;
         }
@@ -218,7 +259,7 @@ namespace NOrders
                 Transform child = root.GetChild(i);
                 // A marker destroyed this frame still exists until the frame
                 // ends; skip one already on its way out.
-                if (child != null && child.name.StartsWith(Prefix)) return child;
+                if (child != null && child.name.StartsWith(Prefix, System.StringComparison.Ordinal)) return child;
             }
             return null;
         }
