@@ -187,14 +187,29 @@ namespace NOrders
                 if (!(spawned is Ship usv)) { hold.AddOrRemoveUnit(type, 1); Host.Say("A Keres could not be launched"); break; }
                 Ownership.Claim(usv);
                 usv.Launch();
+                Amphib.OnRail(hold, usv);
                 Vector3 outward = at.forward; outward.y = 0f; outward.Normalize();
                 Vector3 across = Vector3.Cross(Vector3.up, outward);
                 Vector3 wait = at.position + outward * 400f + across * ((i - (count - 1) * 0.5f) * 60f);
                 wait.y = Datum.LocalSeaY;
-                yield return new WaitForSeconds(0.5f);
+                // Out of the dock before its own steering has it: a boat
+                // spawned in the well deck could not find its way out. Pushed
+                // straight out of the door, carried with the ship's motion,
+                // until clear of the stern (15 s at most).
+                for (float pushed = 0f; pushed < 15f && usv != null && !usv.disabled && usv.rb != null &&
+                     Vector3.Distance(usv.transform.position, at.position) < Amphib.ClearDistance + 40f; pushed += Time.fixedDeltaTime)
+                {
+                    hold.OpenDoors();
+                    Vector3 carried = carrier != null && carrier.rb != null ? carrier.rb.GetPointVelocity(usv.transform.position) : Vector3.zero;
+                    Vector3 v = carried + outward * 9f;
+                    v.y = usv.rb.velocity.y;
+                    usv.rb.velocity = v;
+                    usv.rb.MoveRotation(Quaternion.Slerp(usv.rb.rotation, Quaternion.LookRotation(outward, Vector3.up), 0.1f));
+                    yield return new WaitForFixedUpdate();
+                }
                 if (usv != null && !usv.disabled) NavigationOrders.ReplaceWaypoint(usv, wait.ToGlobalPosition(), out _);
                 Host.LogInfo("[keres] " + ShipNames.Of(carrier) + " launched " + ShipNames.Of(usv) + " (" + (i + 1) + "/" + count + ")");
-                yield return new WaitForSeconds(3f);
+                yield return new WaitForSeconds(1f);
             }
             Host.Say(ShipNames.Of(carrier) + " · Keres launched");
         }

@@ -78,6 +78,17 @@ namespace NOrders
 
         internal static bool HasWellDeck(Ship ship) => Deck(ship) != null;
 
+        // Hands a launched unit to the hold's rail, which runs it out while
+        // it is close -- as the game does for its own landing craft.
+        internal static void OnRail(UnitStorage hold, Unit launched)
+        {
+            if (hold == null || launched == null) return;
+            LastDeployed?.SetValue(hold, launched);
+            hold.enabled = true;
+        }
+
+        internal static float ClearDistance => ClearOfDeck;
+
         // Where craft leave the hold: its deploy point, or the door.
         internal static Transform DoorOf(UnitStorage hold) =>
             hold == null ? null : DeployTransform?.GetValue(hold) as Transform ?? hold.GetDoorTransform();
