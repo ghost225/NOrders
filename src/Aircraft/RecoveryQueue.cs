@@ -12,8 +12,7 @@ namespace NOrders
     // field. Within MarshalRange of it each joins a marshal stack overhead in
     // the order it arrived -- the first at MarshalBase, each after it
     // MarshalStep higher; astern of a ship, overhead a land field -- and only
-    // the head of the queue is cleared to the game's approach, which at sea
-    // it joins from a gate on the extended centreline. The next is cleared once the one ahead has landed and
+    // the head of the queue is cleared to the game's approach. The next is cleared once the one ahead has landed and
     // had a few seconds to clear the deck or runway, or has gone round. A
     // ship turning holds the queue (DeckWaveOff); any other aircraft on the
     // approach to that field, ours or not, holds it too. One low on fuel goes
@@ -22,11 +21,11 @@ namespace NOrders
     internal static class RecoveryQueue
     {
         internal const float MarshalRange = 14000f, MarshalBase = 600f, MarshalStep = 150f, MarshalRadius = 2500f;
-        // At sea the stack holds astern of the ship, and the one cleared flies
-        // to a gate on the extended centreline before the game's approach
-        // takes it: released from overhead, high and close, the approach had
-        // no room -- jets dived short into the stern or arrived fast and long.
-        internal const float MarshalAstern = 7000f, GateAstern = 6000f, GateHeight = 400f;
+        // At sea the stack holds astern of the ship: released from overhead,
+        // high and close, the approach had no room -- jets dived short into
+        // the stern or arrived fast and long. From astern, the one cleared
+        // goes straight to the game's approach.
+        internal const float MarshalAstern = 7000f;
         private const float DeckClearSeconds = 8f, ClearedAtMost = 300f, LowFuel = 0.1f, Dry = 0.04f;
 
         private sealed class Field

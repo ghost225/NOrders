@@ -1341,8 +1341,6 @@ namespace NOrders
         // and never to a ship that is turning (DeckWaveOff). Helicopters land
         // on their own pads and go straight to the game's landing.
         private bool marshalling;
-        private float gateSince = -1f, gateSide = 1f;
-        private int gateLeg;
         private void FlyHome(Pilot pilot)
         {
             Airbase field = flight.Home;
@@ -1361,65 +1359,20 @@ namespace NOrders
             string name = Airfields.NameOf(field);
             if (distance > RecoveryQueue.MarshalRange)
             {
-                gateSince = -1f;
                 flight.Doing("RETURNING · " + UnitConverter.DistanceReading(Horizontal(centre, aircraft.GlobalPosition())) + " to " + name);
                 Steer(stack);
                 return;
             }
             if (RecoveryQueue.Cleared(flight, field, out int place, out string why))
             {
-                // At sea: a fixed two-leg pattern onto the extended centreline
-                // before the game's approach has it -- out to a point wide of
-                // the line and well astern, then in down the line -- with the
-                // leg kept, not re-decided each frame: deciding it afresh from
-                // thresholds flipped it back and forth round the gate, and the
-                // turning climbed it out of reach. Two minutes at most.
-                if (deck != null && !AtGate(deck, centre, astern))
-                {
-                    if (gateSince < 0f)
-                    {
-                        gateSince = Time.timeSinceLevelLoad;
-                        Vector3 from = aircraft.GlobalPosition() - centre; from.y = 0f;
-                        Vector3 side = Vector3.Cross(Vector3.up, astern);
-                        gateSide = Vector3.Dot(from, side) >= 0f ? 1f : -1f;
-                        gateLeg = Vector3.Dot(from, astern) > RecoveryQueue.GateAstern + 2000f ? 1 : 0;
-                    }
-                    if (Time.timeSinceLevelLoad - gateSince < 120f)
-                    {
-                        // Sized to the turn it will fly: at pattern speed and
-                        // 35 degrees of bank, its radius is v^2 / (g tan 35).
-                        // The out-turn point sits two radii off the line, so the
-                        // turn onto it ends on the line, about a kilometre beyond
-                        // the gate -- not a fixed 9.5 km astern plus a 5 km turn
-                        // at cruise, which put the turn-in 16 km behind the ship.
-                        float pattern = PatternSpeed();
-                        float v = Mathf.Max(Mathf.Min(aircraft.speed, pattern * 1.3f), pattern);
-                        float radius = v * v / (9.81f * Mathf.Tan(35f * Mathf.Deg2Rad));
-                        Vector3 across = Vector3.Cross(Vector3.up, astern) * gateSide;
-                        GlobalPosition wide = centre + astern * (RecoveryQueue.GateAstern + 1000f) + across * Mathf.Clamp(2f * radius, 1500f, 5000f);
-                        if (gateLeg == 0 && Horizontal(wide, aircraft.GlobalPosition()) < 1500f) gateLeg = 1;
-                        float ordered = flight.Altitude;
-                        flight.Altitude = RecoveryQueue.GateHeight;
-                        Vector3 fromShip = aircraft.GlobalPosition() - centre; fromShip.y = 0f;
-                        float behind = Vector3.Dot(fromShip, astern);
-                        // In too close without getting lined up: out and round again.
-                        if (gateLeg == 1 && behind < 2500f) gateLeg = 0;
-                        GlobalPosition aim = gateLeg == 0 ? wide : centre + astern * Mathf.Max(behind - 2500f, 1500f);
-                        flight.Doing("CLEARED · " + (gateLeg == 0 ? "out to turn in" : "turning in down the line") + " · " +
-                            UnitConverter.DistanceReading(Horizontal(centre, aircraft.GlobalPosition())) + " astern");
-                        Steer(aim, default, 35f);
-                        HoldSpeed(pattern);
-                        flight.Altitude = ordered;
-                        return;
-                    }
-                }
-                if (marshalling || gateSince >= 0f) Host.LogInfo("[flight] " + flight.Name + " · on the approach to " + name);
+                // Its turn: straight to the game's own approach. From the stack
+                // astern the native landing lines itself up well enough; the
+                // legs flown first only made the turn-in slow.
+                if (marshalling) Host.LogInfo("[flight] " + flight.Name + " · on the approach to " + name);
                 marshalling = false;
-                gateSince = -1f;
                 HandBackToLanding(pilot);
                 return;
             }
-            gateSince = -1f;
             if (!marshalling)
             {
                 marshalling = true;
@@ -1431,40 +1384,6 @@ namespace NOrders
             flight.Doing("MARSHAL · " + (place > 0 ? "#" + place + " to land" : "holding") + (why != null ? " · " + why : "") + " · " + name);
             FlyOrbit(stack, RecoveryQueue.MarshalRadius);
             flight.Altitude = held;
-        }
-
-        // The speed to fly the line-up at: well clear of the stall (half again
-        // the takeoff speed), at least the game's approach speed, and no faster
-        // than corner speed.
-        private float PatternSpeed()
-        {
-            if (parameters == null) return 120f;
-            float speed = Mathf.Max(parameters.takeoffSpeed * 1.5f, parameters.approachSpeed * 1.3f, 70f);
-            if (parameters.cornerSpeed > 0f) speed = Mathf.Min(speed, parameters.cornerSpeed);
-            return speed;
-        }
-
-        // Throttle toward a speed: brakes nothing, just power.
-        private void HoldSpeed(float speed)
-        {
-            if (!(aircraft.autopilot is AutopilotPlane) || controlInputs == null) return;
-            controlInputs.throttle = Mathf.Clamp(0.45f + (speed - aircraft.speed) * 0.04f, 0.05f, 1f);
-            controlInputs.customAxis1 = 0f;                    // no afterburner in the pattern
-        }
-
-        // Inside the gate: astern of the ship within a few kilometres of the
-        // centreline, heading up it, and down near the approach height.
-        private bool AtGate(Ship deck, GlobalPosition centre, Vector3 astern)
-        {
-            Vector3 fromShip = aircraft.GlobalPosition() - centre; fromShip.y = 0f;
-            float behind = Vector3.Dot(fromShip, astern);
-            float off = (fromShip - astern * behind).magnitude;
-            Vector3 heading = Flat(aircraft.rb != null && aircraft.speed > 5f ? aircraft.rb.velocity : aircraft.transform.forward);
-            bool lined = Vector3.Angle(heading, -astern) < 35f;
-            // The game's approach copes with a little height and offset; what
-            // it cannot cope with is starting overhead or crossways.
-            return gateLeg == 1 && behind > 2500f && behind < RecoveryQueue.GateAstern + 3000f && off < 1500f && lined &&
-                   aircraft.radarAlt < RecoveryQueue.GateHeight + 600f;
         }
 
         private void HandBackToLanding(Pilot pilot)
