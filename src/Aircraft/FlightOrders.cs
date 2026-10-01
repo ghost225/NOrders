@@ -1108,6 +1108,7 @@ namespace NOrders
         public static void SetRoute(Flight flight, GlobalPosition point, bool append)
         {
             if (flight == null) return;
+            TakeBack(flight);
             StrikePlans.Cancel(flight);
             LeaveJamStation(flight);
             if (!append) flight.Route.Clear();
@@ -1134,9 +1135,26 @@ namespace NOrders
         // released, will not prosecute anything outside it. That is the
         // difference between a patrol and an aircraft that wanders off after the
         // first contact it sees.
+        // A movement order flown by us, wherever the aircraft is: the game's
+        // combat pilot, given it for a strike or a fight, kept it -- a lead
+        // sent to a new area after a missile strike flew straight on with its
+        // target dead, the order noted and nobody flying it. Taken back unless
+        // ours already has it; a threat still hands it over again as usual.
+        private static void TakeBack(Flight flight)
+        {
+            if (flight?.Aircraft == null) return;
+            Pilot pilot = FirstPilot(flight.Aircraft);
+            if (pilot == null || pilot.playerControlled || pilot.currentState is NavalPilotState) return;
+            if (StillLeaving(pilot)) return;                 // off the deck first; adoption follows
+            if (flight.Mode == FlightMode.Strike || flight.Mode == FlightMode.Egress || flight.Mode == FlightMode.Engage) flight.Target = null;
+            flight.Adopted = false;
+            flight.Interrupted = false;
+        }
+
         public static void SetArea(Flight flight, GlobalPosition centre, float radius)
         {
             if (flight == null) return;
+            TakeBack(flight);
             StrikePlans.Cancel(flight);
             flight.OrbitCentre = centre;
             flight.OrbitRadius = Mathf.Clamp(radius, 500f, 60000f);
@@ -1165,6 +1183,7 @@ namespace NOrders
         public static void Station(Flight flight, Ship on = null)
         {
             if (flight == null || (flight.Home == null && on == null)) return;
+            TakeBack(flight);
             StrikePlans.Cancel(flight);
             LeaveJamStation(flight);
             flight.StationShip = on;
