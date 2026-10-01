@@ -1386,8 +1386,17 @@ namespace NOrders
                     }
                     if (Time.timeSinceLevelLoad - gateSince < 120f)
                     {
+                        // Sized to the turn it will fly: at pattern speed and
+                        // 35 degrees of bank, its radius is v^2 / (g tan 35).
+                        // The out-turn point sits two radii off the line, so the
+                        // turn onto it ends on the line, about a kilometre beyond
+                        // the gate -- not a fixed 9.5 km astern plus a 5 km turn
+                        // at cruise, which put the turn-in 16 km behind the ship.
+                        float pattern = PatternSpeed();
+                        float v = Mathf.Max(Mathf.Min(aircraft.speed, pattern * 1.3f), pattern);
+                        float radius = v * v / (9.81f * Mathf.Tan(35f * Mathf.Deg2Rad));
                         Vector3 across = Vector3.Cross(Vector3.up, astern) * gateSide;
-                        GlobalPosition wide = centre + astern * (RecoveryQueue.GateAstern + 3500f) + across * 2000f;
+                        GlobalPosition wide = centre + astern * (RecoveryQueue.GateAstern + 1000f) + across * Mathf.Clamp(2f * radius, 1500f, 5000f);
                         if (gateLeg == 0 && Horizontal(wide, aircraft.GlobalPosition()) < 1500f) gateLeg = 1;
                         float ordered = flight.Altitude;
                         flight.Altitude = RecoveryQueue.GateHeight;
@@ -1399,6 +1408,7 @@ namespace NOrders
                         flight.Doing("CLEARED · " + (gateLeg == 0 ? "out to turn in" : "turning in down the line") + " · " +
                             UnitConverter.DistanceReading(Horizontal(centre, aircraft.GlobalPosition())) + " astern");
                         Steer(aim, default, 35f);
+                        HoldSpeed(pattern);
                         flight.Altitude = ordered;
                         return;
                     }
@@ -1421,6 +1431,25 @@ namespace NOrders
             flight.Doing("MARSHAL · " + (place > 0 ? "#" + place + " to land" : "holding") + (why != null ? " · " + why : "") + " · " + name);
             FlyOrbit(stack, RecoveryQueue.MarshalRadius);
             flight.Altitude = held;
+        }
+
+        // The speed to fly the line-up at: well clear of the stall (half again
+        // the takeoff speed), at least the game's approach speed, and no faster
+        // than corner speed.
+        private float PatternSpeed()
+        {
+            if (parameters == null) return 120f;
+            float speed = Mathf.Max(parameters.takeoffSpeed * 1.5f, parameters.approachSpeed * 1.3f, 70f);
+            if (parameters.cornerSpeed > 0f) speed = Mathf.Min(speed, parameters.cornerSpeed);
+            return speed;
+        }
+
+        // Throttle toward a speed: brakes nothing, just power.
+        private void HoldSpeed(float speed)
+        {
+            if (!(aircraft.autopilot is AutopilotPlane) || controlInputs == null) return;
+            controlInputs.throttle = Mathf.Clamp(0.45f + (speed - aircraft.speed) * 0.04f, 0.05f, 1f);
+            controlInputs.customAxis1 = 0f;                    // no afterburner in the pattern
         }
 
         // Inside the gate: astern of the ship within a few kilometres of the
