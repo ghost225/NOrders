@@ -77,7 +77,7 @@ namespace NOrders
             // Not faster than the slowest wingman still behind, plus a little.
             if (Wings.SlowestBehind(flight, out float slowest) && aircraft.speed > slowest + 4f)
                 lead -= Mathf.Min(0.25f, (aircraft.speed - slowest - 4f) * 0.03f);
-            float minimum = definitionTakeoffSpeed * 1.4f;
+            float minimum = WingBorneTakeoff() * 1.4f;
             if (minimum > 0f && aircraft.speed < minimum) lead = Mathf.Max(lead, cruise);
             return Mathf.Clamp(lead, 0.45f, 1f);
         }
@@ -177,8 +177,8 @@ namespace NOrders
                 // the power: only real stall danger takes it out of formation.
                 // Wingmen of a heavy lead cruising under the bar were leaving
                 // the formation every few seconds to "recover".
-                if (slow && flight.Mode == FlightMode.Formation && parameters != null && parameters.takeoffSpeed > 0f)
-                    slow = aircraft.speed < parameters.takeoffSpeed * 1.1f;
+                if (slow && flight.Mode == FlightMode.Formation && WingBorneTakeoff() > 0f)
+                    slow = aircraft.speed < WingBorneTakeoff() * 1.1f;
                 // A wingman follows its lead's height, which may be low on
                 // purpose; it is only "low" close to the ground.
                 bool low = aircraft.radarAlt < (flight.Mode == FlightMode.Formation ? 60f : LowBar) &&
@@ -300,7 +300,7 @@ namespace NOrders
             float verticalError = (destination - aircraft.GlobalPosition()).y;
             Host.LogInfo("[flight] " + flight.Name + " · " + flight.Describe() +
                 " · dest bearing " + bearing.ToString("000") + "° range " + (offset.magnitude / 1000f).ToString("0.0") +
-                " km · alt " + aircraft.radarAlt.ToString("0") + " ordered " + flight.Altitude.ToString("0") +
+                " km · alt " + aircraft.radarAlt.ToString("0") + " ordered " + flight.Altitude.ToString("0") + " · spd " + aircraft.speed.ToString("0") +
                 " (dest dy " + verticalError.ToString("0") + ")" +
                 " · state " + (aircraft.autopilot != null ? aircraft.autopilot.GetType().Name : "none"));
         }
@@ -826,9 +826,25 @@ namespace NOrders
             if (parameters == null) return 0f;
             float bar = float.PositiveInfinity;
             if (parameters.cornerSpeed > 0f) bar = Mathf.Min(bar, parameters.cornerSpeed * 1.05f);
-            if (parameters.takeoffSpeed > 0f) bar = Mathf.Min(bar, parameters.takeoffSpeed * 1.25f);
+            float takeoff = WingBorneTakeoff();
+            if (takeoff > 0f) bar = Mathf.Min(bar, takeoff * 1.25f);
             if (parameters.maxSpeed > 0f) bar = Mathf.Min(bar, parameters.maxSpeed * 0.6f);
             return float.IsInfinity(bar) ? 0f : bar;
+        }
+
+        // The takeoff speed, when it says anything about the wing. A
+        // vertical-landing type (the FS-20 Vortex) leaves the deck on thrust at
+        // 35 m/s, and a stall bar of 44 m/s read off that let ten of them mush
+        // out of a 6,000 m orbit at full power and go in without the energy
+        // recovery ever firing: their wing-borne stall is three times that.
+        // Zero for such a type, and for any whose takeoff speed is under 40%
+        // of its corner speed; the corner and top speeds set the bar then.
+        private float WingBorneTakeoff()
+        {
+            if (parameters == null || parameters.takeoffSpeed <= 0f) return 0f;
+            if (parameters.verticalLanding) return 0f;
+            if (parameters.cornerSpeed > 0f && parameters.takeoffSpeed < parameters.cornerSpeed * 0.4f) return 0f;
+            return parameters.takeoffSpeed;
         }
 
         internal static bool CanBeFlown(Aircraft aircraft) =>
