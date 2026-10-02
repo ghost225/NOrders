@@ -26,7 +26,13 @@ namespace NOrders
             pilot.SwitchStateNew(state);
             Host.LogInfo("[flight] " + flight.Name + " under command · " + flight.Describe() + " · from " +
                 (pilot.currentState?.GetType().Name ?? "none") + " · alt " + pilot.aircraft.radarAlt.ToString("0") +
-                " m · speed " + pilot.aircraft.speed.ToString("0") + " m/s");
+                " m · speed " + pilot.aircraft.speed.ToString("0") + " m/s" + Speeds(pilot.aircraft));
+        }
+
+        private static string Speeds(Aircraft aircraft)
+        {
+            AircraftParameters p = aircraft?.GetAircraftParameters();
+            return p == null ? "" : " · corner " + p.cornerSpeed.ToString("0") + " / top " + p.maxSpeed.ToString("0") + " m/s";
         }
 
         public override void EnterState(Pilot pilot)
@@ -65,10 +71,21 @@ namespace NOrders
         // its own flying speed.
         private float CruiseThrottle()
         {
-            // Speed before economy: an airframe that cannot hold well above its
-            // corner speed at cruise power gets full power (and the burner).
+            // Speed before economy: full power (and the burner) below corner
+            // speed, easing to cruise by 1.3 times it:
+            // a flat full power anywhere under 1.3 times kept a fast-cornering
+            // jet (the FS-41) on its burner, zooming past its ordered height
+            // and diving back at 470 m/s.
             float corner = parameters != null ? parameters.cornerSpeed : 0f;
-            if (corner > 0f && aircraft.speed < corner * 1.3f) return 1f;
+            if (corner > 0f && aircraft.speed < corner) return 1f;
+            float result = CruiseFor();
+            if (corner > 0f && aircraft.speed < corner * 1.3f)
+                result = Mathf.Lerp(1f, result, (aircraft.speed - corner) / (corner * 0.3f));
+            return result;
+        }
+
+        private float CruiseFor()
+        {
             float cruise = Tuning.CruiseThrottle;
             if (!Wings.HasFollowers(flight)) return cruise;
             float lead = cruise - 0.05f;
@@ -390,6 +407,27 @@ namespace NOrders
             if (!(aircraft.autopilot is AutopilotPlane)) return;
             AuxAxis.Apply(aircraft, controlInputs);
         }
+
+        // Not past what the airframe can take. Power comes off from 80% of
+        // the airframe's top speed and is down to idle by 92%, whatever set
+        // it -- cruise, a run-in or formation keeping. A long descent at
+        // cruise power had an FS-41 at 470 m/s when it reached its orbit;
+        // the turn onto it tore the cockpit off.
+        private void LimitSpeed()
+        {
+            float top = parameters != null ? parameters.maxSpeed : 0f;
+            if (top <= 0f) return;
+            float over = Mathf.InverseLerp(top * 0.8f, top * 0.92f, aircraft.speed);
+            if (over <= 0f) return;
+            controlInputs.throttle = Mathf.Min(controlInputs.throttle, Mathf.Lerp(controlInputs.throttle, 0.1f, over));
+            Reheat();
+            if (over >= 1f && Time.timeSinceLevelLoad >= overspeedNoteAt)
+            {
+                overspeedNoteAt = Time.timeSinceLevelLoad + 15f;
+                Tracing.Flight("[flight] " + flight.Name + " · overspeed · " + aircraft.speed.ToString("0") + " of " + top.ToString("0") + " m/s, power off");
+            }
+        }
+        private float overspeedNoteAt;
 
         // How hard to bank with the speed in hand. A fighter well above its
         // corner speed can hold the seventy degrees the transit code allows; one
@@ -863,6 +901,7 @@ namespace NOrders
                     point += Vector3.up * (y - point.y);
                 }
                 destination = point;
+                LimitSpeed();
                 autopilot.AutoAim(point, aimVelocity: true, ignoreCollisions: false, runwayAlign: false,
                     effort: 1f, bankAllowed: bank, followTerrain: followTerrain,
                     altitudeHold: aboveGround, targetVelocity: velocity);
