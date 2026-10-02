@@ -389,6 +389,17 @@ namespace NOrders
             Vector3 offset = aircraft.GlobalPosition() - centre;
             offset.y = 0f;
             float radius = radiusOverride > 0f ? radiusOverride : Mathf.Max(flight.OrbitRadius, 400f);
+            // Never a circle tighter than the speed allows at a sane bank: a
+            // 2.5 km join-up circle at 437 m/s wants 82 degrees and over 7 g,
+            // and a Vortex lead forming up pulled 9-14 g on it until it came
+            // apart. At most 60 degrees (2 g), and less where the stall
+            // margin says so; the circle widens instead.
+            if (aircraft.autopilot is AutopilotPlane)
+            {
+                float bank = Mathf.Min(SafeBank(), 60f) * Mathf.Deg2Rad;
+                float tightest = aircraft.speed * aircraft.speed / (9.81f * Mathf.Tan(bank)) * 1.15f;
+                radius = Mathf.Max(radius, tightest);
+            }
             float distance = offset.magnitude;
             Vector3 outward = distance > 1f ? offset / distance : Flat(aircraft.transform.forward);
 
@@ -917,7 +928,15 @@ namespace NOrders
                     // as the autopilot cuts it near the ground.
                     float banked = Mathf.Min(bank, SafeBank()) * Mathf.Clamp(aircraft.radarAlt * 0.003f - 1f, 0.6f, 1.2f);
                     float lateral = Mathf.Lerp(12f, 90f, Mathf.InverseLerp(20f, 65f, banked));
-                    if (flight.Mode != FlightMode.Formation && track.sqrMagnitude > 1f && toward.sqrMagnitude > 1f && Vector3.Angle(track, toward) > lateral)
+                    // And less the faster it goes: the same angle off is a
+                    // harder pull at speed. About 4 g's worth at the
+                    // autopilot's pace -- 10 degrees at 440 m/s, 30 at 150.
+                    // A wingman gets half as much again, to hold its slot.
+                    float bySpeed = Mathf.Clamp(Mathf.Rad2Deg * 80f / Mathf.Max(aircraft.speed, 1f), 8f, 90f);
+                    if (flight.Mode == FlightMode.Formation) bySpeed *= 1.5f;
+                    else lateral = Mathf.Min(lateral, bySpeed);
+                    if (flight.Mode == FlightMode.Formation) lateral = bySpeed;
+                    if (track.sqrMagnitude > 1f && toward.sqrMagnitude > 1f && Vector3.Angle(track, toward) > lateral)
                     {
                         float side = Mathf.Sign(Vector3.SignedAngle(track, toward, Vector3.up));
                         Vector3 swung = Quaternion.AngleAxis(lateral * side, Vector3.up) * track.normalized * toward.magnitude;
