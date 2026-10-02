@@ -196,7 +196,10 @@ namespace NOrders
             {
                 float bar = SlowBar();
                 bool justOut = recoveringSince < 0f && Time.timeSinceLevelLoad - recoveredAt < 20f;
-                bool slow = bar > 0f && aircraft.speed < bar * (justOut ? 0.93f : 1f);
+                // Once in recovery it stays until well over the bar: a Vortex
+                // flipped in and out at 181 and 191 against 189 and never
+                // gained anything.
+                bool slow = bar > 0f && aircraft.speed < bar * (recoveringSince >= 0f ? 1.12f : justOut ? 0.93f : 1f);
                 // A wingman flies the lead's speed and its formation code sets
                 // the power: only real stall danger takes it out of formation.
                 // Wingmen of a heavy lead cruising under the bar were leaving
@@ -223,9 +226,17 @@ namespace NOrders
                     // The climb always clears the low bar: capped at the ordered
                     // height alone, a wingman whose ordered height read 0 held
                     // at 53 m -- still "low" -- and flew straight on for 30 km.
-                    flight.Altitude = low
-                        ? Mathf.Clamp(aircraft.radarAlt + 300f, LowBar + 150f, Mathf.Max(ordered, LowBar + 150f))
-                        : Mathf.Max(aircraft.radarAlt - 150f, MinimumClearance);
+                    // Slow: unload decisively -- 600 m down over the 5 km run,
+                    // about seven degrees; the 150 m ease-down never produced a
+                    // descent and a Vortex mushed from 1,550 m at full power.
+                    // Low and not slow: climb. Low AND slow: no climb -- a
+                    // King Viper at 99 m/s was pulled up 300 m and went into
+                    // the water at 38 m/s -- level at full power until the
+                    // speed is back, unless nearly on the ground, where a
+                    // gentle climb is the only way out.
+                    if (slow && !low) flight.Altitude = Mathf.Max(aircraft.radarAlt - 600f, MinimumClearance);
+                    else if (slow) flight.Altitude = aircraft.radarAlt < 40f ? aircraft.radarAlt + 80f : aircraft.radarAlt;
+                    else flight.Altitude = Mathf.Clamp(aircraft.radarAlt + 300f, LowBar + 150f, Mathf.Max(ordered, LowBar + 150f));
                     flight.Doing("RECOVERING ENERGY");
                     if (recoveringSince < 0f) { recoveringSince = Time.timeSinceLevelLoad; Tracing.Flight("[flight] " + flight.Name + " · recovering energy · " + aircraft.speed.ToString("0") + " m/s (bar " + bar.ToString("0") + ") at " + aircraft.radarAlt.ToString("0") + " m"); }
                     Steer(aircraft.GlobalPosition() + ahead.normalized * 5000f, default, 30f);
@@ -931,6 +942,12 @@ namespace NOrders
                     float y = Mathf.Clamp(point.y, low, high);
                     point += Vector3.up * (y - point.y);
                 }
+                // Overspeed: besides power off, no descent -- a Medusa at
+                // idle still ran to 267 m/s down a ten-degree slope and came
+                // apart. Half way to the limit the point is no lower than the
+                // aircraft; at the limit it is a little above.
+                float over = SpeedLimit.Over(aircraft);
+                if (over >= 0.5f && point.y < from.y + (over >= 1f ? 150f : 0f)) point += Vector3.up * (from.y + (over >= 1f ? 150f : 0f) - point.y);
                 destination = point;
                 LimitSpeed();
                 // The game's own G and AoA limits, kept on (see EnterState).
