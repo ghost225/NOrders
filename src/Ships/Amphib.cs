@@ -192,7 +192,12 @@ namespace NOrders
             internal readonly Dictionary<UnitDefinition, int> Load = new Dictionary<UnitDefinition, int>();   // the craft being loaded
             internal readonly List<Dictionary<UnitDefinition, int>> Wave = new List<Dictionary<UnitDefinition, int>>();   // readied
             internal bool HasPoint;
-            internal Vector3 Point, Ashore;
+            // Kept as world positions: the game's floating origin moves under
+            // a plain Vector3, and a point held as one wandered off its beach
+            // every time the origin shifted.
+            private GlobalPosition point, ashore;
+            internal Vector3 Point { get => point.ToLocalPosition(); set => point = value.ToGlobalPosition(); }
+            internal Vector3 Ashore { get => ashore.ToLocalPosition(); set => ashore = value.ToGlobalPosition(); }
             internal bool Predicted;
             internal string Hint;
         }
@@ -260,19 +265,23 @@ namespace NOrders
 
         // The preview under the cursor, re-solved only when the cursor moves
         // far enough to matter.
-        private static Vector3 previewFor = new Vector3(float.NaN, 0f, 0f);
-        private static Vector3 previewAshore;
+        private static GlobalPosition previewFor;
+        private static bool previewed;
+        private static GlobalPosition previewAshore;
         private static bool previewLands;
         private static string previewHint;
 
         internal static bool Preview(Vector3 point, out Vector3 ashore, out string hint)
         {
-            if (float.IsNaN(previewFor.x) || (point - previewFor).sqrMagnitude > 25f * 25f)
+            GlobalPosition here = point.ToGlobalPosition();
+            if (!previewed || FastMath.Distance(here, previewFor) > 25f)
             {
-                previewFor = point;
-                previewLands = AmphibSurvey.Assess(point, out previewAshore, out previewHint);
+                previewed = true;
+                previewFor = here;
+                previewLands = AmphibSurvey.Assess(point, out Vector3 lands, out previewHint);
+                previewAshore = lands.ToGlobalPosition();
             }
-            ashore = previewAshore;
+            ashore = previewAshore.ToLocalPosition();
             hint = previewHint;
             return previewLands;
         }
@@ -282,7 +291,8 @@ namespace NOrders
             Plan plan = PlanFor(ship);
             plan.HasPoint = true;
             plan.Point = point;
-            plan.Predicted = AmphibSurvey.Assess(point, out plan.Ashore, out plan.Hint);
+            plan.Predicted = AmphibSurvey.Assess(point, out Vector3 ashore, out plan.Hint);
+            plan.Ashore = ashore;
         }
 
         // ---- launching -------------------------------------------------------------
@@ -293,15 +303,18 @@ namespace NOrders
             internal LandingCraftAI Ai;
             internal UnitStorage Hold;
             internal string Name, Load;
-            internal Vector3 Point, Ashore;
+            private GlobalPosition point, ashore, laneAshore, muster;   // world positions, as the plan's
+            internal Vector3 Point { get => point.ToLocalPosition(); set => point = value.ToGlobalPosition(); }
+            internal Vector3 Ashore { get => ashore.ToLocalPosition(); set => ashore = value.ToGlobalPosition(); }
             internal float LaunchedAt;
             internal bool Ordered, Unloaded, Recalled, Launching = true;
             internal int Orders;
             internal float NextOrder;
             internal int Wave;                  // launched together; they go in together
             internal bool HasLane;              // its own line up the beach
-            internal Vector3 LaneAshore, LaneWay;
-            internal Vector3 Muster;            // where it waits astern for the rest
+            internal Vector3 LaneAshore { get => laneAshore.ToLocalPosition(); set => laneAshore = value.ToGlobalPosition(); }
+            internal Vector3 LaneWay;
+            internal Vector3 Muster { get => muster.ToLocalPosition(); set => muster = value.ToGlobalPosition(); }   // where it waits astern for the rest
             internal bool Mustering, MusterOrdered;
             internal ShipAI.ShipAIState Logged = (ShipAI.ShipAIState)(-1);
         }
@@ -359,7 +372,7 @@ namespace NOrders
             waveLaunching[wave] = true;
             deckBusy.Add(ship);
             var runner = ship.gameObject.GetComponent<AmphibRunner>() ?? ship.gameObject.AddComponent<AmphibRunner>();
-            runner.StartCoroutine(LaunchCraft(deck, loads, plan.Point, lanes, wave));
+            runner.StartCoroutine(LaunchCraft(deck, loads, plan.Point.ToGlobalPosition(), lanes, wave));
             plan.Wave.Clear();
             reason = loads.Count + " landing craft launching";
             return true;
@@ -375,7 +388,9 @@ namespace NOrders
         // craft still on the beach skipped.
         internal sealed class Lane
         {
-            internal Vector3 Ashore, Way;
+            private GlobalPosition ashore;
+            internal Vector3 Ashore { get => ashore.ToLocalPosition(); set => ashore = value.ToGlobalPosition(); }
+            internal Vector3 Way;
             internal string Hint;
         }
 
@@ -492,7 +507,7 @@ namespace NOrders
 
         private const float MusterAstern = 700f, MusterSpacing = 200f, ClearOfDeck = 60f;
 
-        private static IEnumerator LaunchCraft(WellDeck deck, List<Dictionary<UnitDefinition, int>> loads, Vector3 point, List<Lane> lanes, int wave)
+        private static IEnumerator LaunchCraft(WellDeck deck, List<Dictionary<UnitDefinition, int>> loads, GlobalPosition spot, List<Lane> lanes, int wave)
         {
             Ship carrier = deck.Ship;
             UnitStorage hold = deck.Hold;
@@ -559,6 +574,7 @@ namespace NOrders
                     if (OnWater(muster)) { muster_ok = true; break; }
                 }
                 Lane lane = lanes.Count > 0 ? lanes[i % lanes.Count] : null;
+                Vector3 point = spot.ToLocalPosition();
                 sorties.Add(new Sortie
                 {
                     Carrier = carrier, Craft = craft, Ai = craft.GetComponent<LandingCraftAI>(), Hold = hold,
