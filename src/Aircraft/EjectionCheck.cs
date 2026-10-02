@@ -24,7 +24,8 @@ namespace NOrders
                 if (nextCheck.TryGetValue(aircraft, out float at) && now < at) continue;
                 nextCheck[aircraft] = now + 1f;
                 if (!Doomed(aircraft, out string why)) continue;
-                Tracing.Flight("[flight] " + flight.Name + " · " + why + " · crew ejecting");
+                Tracing.Flight("[flight] " + flight.Name + " · " + why + " · crew ejecting · " + aircraft.speed.ToString("0") + " m/s at " +
+                    aircraft.radarAlt.ToString("0") + " m · peak " + GLimitPatch.Peak(aircraft).ToString("0.0") + " g");
                 aircraft.StartEjectionSequence();
                 Ejected++;
             }

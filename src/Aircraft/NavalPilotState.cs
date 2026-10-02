@@ -325,6 +325,7 @@ namespace NOrders
             Host.LogInfo("[flight] " + flight.Name + " · " + flight.Describe() +
                 " · dest bearing " + bearing.ToString("000") + "° range " + (offset.magnitude / 1000f).ToString("0.0") +
                 " km · alt " + aircraft.radarAlt.ToString("0") + " ordered " + flight.Altitude.ToString("0") + " · spd " + aircraft.speed.ToString("0") +
+                " · peak " + GLimitPatch.Peak(aircraft).ToString("0.0") + " g" +
                 " (dest dy " + verticalError.ToString("0") + ")" +
                 " · state " + (aircraft.autopilot != null ? aircraft.autopilot.GetType().Name : "none"));
         }
