@@ -427,16 +427,27 @@ namespace NOrders
         }
         private float overspeedNoteAt;
 
-        // How hard to bank with the speed in hand. A fighter well above its
-        // corner speed can hold the seventy degrees the transit code allows; one
-        // near it is levelled off, or it holds the turn until it stalls -- seven
-        // fighters went into the sea from a routine orbit in one run.
+        // How hard to bank with the speed in hand: from the load the wing can
+        // give above its stall -- (speed / stall)^2 g -- with a wide margin,
+        // the bank whose level turn needs no more than that. Twenty degrees
+        // at least, seventy at most. Reckoned from corner speed instead, a
+        // jet cruising right at it (the FS-41's 180 m/s) was held to 25
+        // degrees, could not fly its circle, and the autopilot made up the
+        // turn by pulling -- at that bank mostly upward, so it spiralled up
+        // on full power to 4 km over a 600 m station. (Seven fighters went
+        // into the sea from a routine orbit long ago with flight assist off;
+        // the game's own G and AoA limits are on now, see EnterState.)
         private float SafeBank()
         {
+            if (!(aircraft.autopilot is AutopilotPlane)) return 60f;
+            float takeoff = WingBorneTakeoff();
             float corner = parameters != null ? parameters.cornerSpeed : 0f;
-            if (corner <= 0f || !(aircraft.autopilot is AutopilotPlane)) return 60f;
-            float margin = (aircraft.speed - corner) / corner;          // 0 at corner speed
-            return Mathf.Lerp(25f, 70f, Mathf.Clamp01(margin / 0.6f));
+            float stall = takeoff > 0f ? takeoff / 1.15f : corner * 0.45f;
+            if (stall <= 0f) return 60f;
+            float ratio = aircraft.speed / stall;
+            float load = ratio * ratio * 0.45f;
+            float bank = load <= 1f ? 0f : Mathf.Acos(1f / load) * Mathf.Rad2Deg;
+            return Mathf.Clamp(bank, 20f, 70f);
         }
 
         private static Vector3 Flat(Vector3 value)
@@ -880,6 +891,27 @@ namespace NOrders
                 Vector3 flat = target - from; flat.y = 0f;
                 float flatRange = flat.magnitude;
                 if (flatRange > 1f && flatRange < MinSteerDistance) target = from + flat / flatRange * MinSteerDistance;
+                // No sharper a turn asked for than the bank allows. What the
+                // bank cannot give, the autopilot takes by pulling the nose
+                // toward the point, and at a shallow bank that pull is mostly
+                // upward: a held-down bank and a hard turn make a climbing
+                // spiral. The point is swung back toward the current track,
+                // so the turn comes from the bank and takes a little longer.
+                {
+                    Vector3 track = aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward;
+                    track.y = 0f;
+                    Vector3 toward = target - from; toward.y = 0f;
+                    // The bank it will really get: ours, and the speed's, cut
+                    // as the autopilot cuts it near the ground.
+                    float banked = Mathf.Min(bank, SafeBank()) * Mathf.Clamp(aircraft.radarAlt * 0.003f - 1f, 0.6f, 1.2f);
+                    float lateral = Mathf.Lerp(12f, 90f, Mathf.InverseLerp(20f, 65f, banked));
+                    if (flight.Mode != FlightMode.Formation && track.sqrMagnitude > 1f && toward.sqrMagnitude > 1f && Vector3.Angle(track, toward) > lateral)
+                    {
+                        float side = Mathf.Sign(Vector3.SignedAngle(track, toward, Vector3.up));
+                        Vector3 swung = Quaternion.AngleAxis(lateral * side, Vector3.up) * track.normalized * toward.magnitude;
+                        target = from + swung + Vector3.up * (target - from).y;
+                    }
+                }
                 GlobalPosition point = AtAltitude(target, aboveGround);
                 // Height changed smoothly: no steeper than 10 degrees down or
                 // 20 up toward the point, so a flight above its height eases
