@@ -147,13 +147,18 @@ namespace NOrders
             return heavy ? Kind.Bomber : Kind.Recon;
         }
 
-        // A wing name for this faction and what the flight carries.
-        internal static string Suggest(FactionHQ hq, AircraftDefinition def, IEnumerable<WeaponInfo> weapons)
+        // A wing name for this faction and what the flight carries; a caller
+        // that knows the job (a commander sending a fighter out to look, or
+        // to stand radar picket) may name the kind instead, since a recon
+        // flight with two missiles for self-defence reads as a fighter.
+        internal static string Suggest(FactionHQ hq, AircraftDefinition def, IEnumerable<WeaponInfo> weapons, Kind? job = null)
         {
             string faction = hq?.faction?.factionName ?? "";
             Dictionary<Kind, string[]> pools = faction == FactionHelper.Boscali ? Boscali : faction == FactionHelper.Primeva ? Primeva : null;
             if (pools == null) return Suggest(def);
-            Kind kind = KindOf(def, weapons);
+            Kind kind = job ?? KindOf(def, weapons);
+            // The airframe still settles a helicopter or a jammer.
+            if (job.HasValue) { Kind byFrame = KindOf(def, null); if (byFrame == Kind.Helicopter || byFrame == Kind.Ew) kind = byFrame; }
             string[] pool = pools[kind];
             var inUse = new HashSet<string>();
             foreach (string label in FlightOrders.LabelsInUse())
@@ -181,11 +186,11 @@ namespace NOrders
         }
 
         // For a loadout being planned on a deck.
-        internal static string Suggest(FactionHQ hq, LoadoutPlan plan)
+        internal static string Suggest(FactionHQ hq, LoadoutPlan plan, Kind? job = null)
         {
             var weapons = new List<WeaponInfo>();
             if (plan != null) foreach (LoadoutStation station in plan.Stations) if (station.Selected?.info != null) weapons.Add(station.Selected.info);
-            return Suggest(hq, plan?.Definition, weapons);
+            return Suggest(hq, plan?.Definition, weapons, job);
         }
 
         // A plan not named by hand takes a name for what it now carries, and
