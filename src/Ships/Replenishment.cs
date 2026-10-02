@@ -237,6 +237,7 @@ namespace NOrders
             plan.Count = 1;
             foreach (LoadoutStation station in plan.Stations)
                 if (station.Index == source.Station) station.Selected = source.Container;
+            Callsigns.Refresh(ship.NetworkHQ, plan);
             string callsign = plan.Callsign ?? Callsigns.Suggest(source.Type);
             if (!CarrierOps.Launch(source.Base, plan, callsign, null, out reason)) return false;
 

@@ -510,7 +510,7 @@ namespace NOrders
                 };
                 flights.Add(flight);
                 CreditKills(aircraft);
-                Rename(flight, callsign ?? Callsigns.Suggest(aircraft.definition));
+                Rename(flight, callsign ?? Callsigns.Suggest(aircraft));
                 Wings.Joined(flight);
                 return flight;
             }
@@ -541,7 +541,7 @@ namespace NOrders
             };
             flights.Add(flight);
             CreditKills(aircraft);
-            Rename(flight, callsign ?? Callsigns.Suggest(aircraft.definition));
+            Rename(flight, callsign ?? Callsigns.Suggest(aircraft));
             Wings.Joined(flight);
             return flight;
         }
@@ -709,7 +709,7 @@ namespace NOrders
                 };
                 flights.Add(flight);
                 CreditKills(found);
-                Rename(flight, request.Callsign ?? Callsigns.Suggest(found.definition));
+                Rename(flight, request.Callsign ?? Callsigns.Suggest(found));
                 Wings.Joined(flight);
                 Host.LogInfo("[flight] adopted " + flight.Name + " from " + Airfields.NameOf(request.Field) + TakeoffCheck.Actual(found));
             }

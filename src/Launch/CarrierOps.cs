@@ -44,6 +44,10 @@ namespace NOrders
         public float Fuel = 1f;
 
         public string Callsign;
+        // Named by hand, or a suggestion taken: kept. Otherwise the name
+        // follows the loadout -- what the wing carries picks its name.
+        public bool CallsignChosen;
+        internal Callsigns.Kind? NamedFor;
         // How many to launch with this loadout; more than one is a wing.
         public int Count = 1;
         // The skin, from the same list the game's own spawn screen offers:
