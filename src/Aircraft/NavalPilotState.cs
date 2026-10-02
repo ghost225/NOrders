@@ -380,11 +380,12 @@ namespace NOrders
         // does, so those jets fly at a fraction of their thrust under any AI
         // and mush into the sea with a full load. Our state pushes the axis
         // whenever it wants full power and releases it otherwise, so the
-        // heat-seeker throttle cut still cools the engine.
+        // heat-seeker throttle cut still cools the engine. Only on those: on a
+        // swivel-duct VTOL the same axis points the ducts (see AuxAxis).
         private void Reheat()
         {
             if (!(aircraft.autopilot is AutopilotPlane)) return;
-            controlInputs.customAxis1 = controlInputs.throttle >= 0.98f ? 1f : 0f;
+            AuxAxis.Apply(aircraft, controlInputs);
         }
 
         // How hard to bank with the speed in hand. A fighter well above its

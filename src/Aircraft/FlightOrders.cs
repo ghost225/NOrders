@@ -674,8 +674,7 @@ namespace NOrders
                 // fought at a fraction of its thrust and died slow.
                 if (flight.Interrupted && flight.Aircraft.autopilot is AutopilotPlane && !Host.IsFlownByPlayer(flight))
                 {
-                    ControlInputs inputs = flight.Aircraft.GetInputs();
-                    if (inputs != null) inputs.customAxis1 = inputs.throttle >= 0.98f ? 1f : 0f;
+                    AuxAxis.Apply(flight.Aircraft, flight.Aircraft.GetInputs());
                 }
             }
 
