@@ -335,6 +335,9 @@ namespace NOrders
         // the tangent with a long look-ahead keeps the destination far off and
         // nearly dead ahead, which is the cruise case the autopilot handles well.
         private const float LookAhead = 6000f;
+        private const float MinSteerDistance = 2500f;
+        private const float MaxSteerDescent = 10f;
+        private const float MaxSteerClimb = 20f;
 
         // About seventeen degrees. Steeper than this and a rotary aircraft
         // pitches up hard enough to lose control rather than climb.
@@ -830,7 +833,35 @@ namespace NOrders
                 // Bank is held well short of the 180 degrees the combat state
                 // allows, since this is transit rather than evasion.
                 bool followTerrain = aboveGround < 400f;
+                GlobalPosition from = aircraft.GlobalPosition();
+                // Never a steering point close in: the autopilot pulls up hard
+                // -- two kilometres of up on a one-kilometre vector, fifty
+                // degrees at fighter speeds -- for any point inside 2 km and
+                // more than 60 degrees off its path, and an orbit flown wide
+                // at low level kept handing it one rejoining the circle. An
+                // FS-41 ordered to 600 m zoomed to 2,100. Same bearing, pushed
+                // out to 2.5 km: the course is unchanged.
+                Vector3 flat = target - from; flat.y = 0f;
+                float flatRange = flat.magnitude;
+                if (flatRange > 1f && flatRange < MinSteerDistance) target = from + flat / flatRange * MinSteerDistance;
                 GlobalPosition point = AtAltitude(target, aboveGround);
+                // Height changed smoothly: no steeper than 10 degrees down or
+                // 20 up toward the point, so a flight above its height eases
+                // down rather than nosing over, and one far below climbs
+                // without standing on its tail. The point never goes below
+                // the ground there; the autopilot's own terrain warning still
+                // pulls up for anything in the way. Not on an attack run,
+                // which may need its nose well down on a low target.
+                if (flight.Mode != FlightMode.Strike)
+                {
+                    Vector3 to = point - from; to.y = 0f;
+                    float run = Mathf.Max(to.magnitude, MinSteerDistance);
+                    float groundThere = point.y - Mathf.Max(aboveGround, MinimumClearance);
+                    float low = from.y - run * Mathf.Tan(MaxSteerDescent * Mathf.Deg2Rad);
+                    float high = Mathf.Max(from.y + run * Mathf.Tan(MaxSteerClimb * Mathf.Deg2Rad), groundThere + MinimumClearance);
+                    float y = Mathf.Clamp(point.y, low, high);
+                    point += Vector3.up * (y - point.y);
+                }
                 destination = point;
                 autopilot.AutoAim(point, aimVelocity: true, ignoreCollisions: false, runwayAlign: false,
                     effort: 1f, bankAllowed: bank, followTerrain: followTerrain,
