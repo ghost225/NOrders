@@ -408,23 +408,14 @@ namespace NOrders
             AuxAxis.Apply(aircraft, controlInputs);
         }
 
-        // Not past what the airframe can take. Power comes off from 80% of
-        // the airframe's top speed and is down to idle by 92%, whatever set
-        // it -- cruise, a run-in or formation keeping. A long descent at
-        // cruise power had an FS-41 at 470 m/s when it reached its orbit;
-        // the turn onto it tore the cockpit off.
+        // Not past what the airframe can take (see SpeedLimit).
         private void LimitSpeed()
         {
-            float top = parameters != null ? parameters.maxSpeed : 0f;
-            if (top <= 0f) return;
-            float over = Mathf.InverseLerp(top * 0.8f, top * 0.92f, aircraft.speed);
-            if (over <= 0f) return;
-            controlInputs.throttle = Mathf.Min(controlInputs.throttle, Mathf.Lerp(controlInputs.throttle, 0.1f, over));
-            Reheat();
-            if (over >= 1f && Time.timeSinceLevelLoad >= overspeedNoteAt)
+            if (!SpeedLimit.Apply(aircraft, controlInputs) || SpeedLimit.Over(aircraft) < 1f) return;
+            if (Time.timeSinceLevelLoad >= overspeedNoteAt)
             {
                 overspeedNoteAt = Time.timeSinceLevelLoad + 15f;
-                Tracing.Flight("[flight] " + flight.Name + " · overspeed · " + aircraft.speed.ToString("0") + " of " + top.ToString("0") + " m/s, power off");
+                Tracing.Flight("[flight] " + flight.Name + " · overspeed · " + aircraft.speed.ToString("0") + " m/s, power off");
             }
         }
         private float overspeedNoteAt;
@@ -1156,8 +1147,18 @@ namespace NOrders
             if (flight?.Aircraft == null || !(flight.Aircraft.autopilot is AutopilotPlane)) return false;
             if (!(flight.Target is Aircraft) || station?.WeaponInfo == null || !station.WeaponInfo.missile || station.Ammo <= 0) return false;
             string seeker = ShotDisciplinePatch.Guidance(station.WeaponInfo);
-            return seeker == "ARH" || seeker == "SARH";
+            if (seeker == "ARH" || seeker == "SARH") return true;
+            // A helicopter, or anything as slow: ours to fly with a
+            // heat-seeker too, from height. Handed to the game's combat pilot
+            // it dived on them at full burner -- one FS-41 into a hill chasing
+            // a helicopter it could no longer see, another torn apart at
+            // 580 m/s.
+            return seeker == "IR" && SlowAirTarget(flight.Target);
         }
+
+        internal static bool SlowAirTarget(Unit target) =>
+            target is Aircraft aircraft && !aircraft.disabled &&
+            (aircraft.autopilot is AutopilotHelo || aircraft.autopilot is AutopilotTiltwing || aircraft.speed < 110f);
 
         // Beyond visual range: climb above the target while closing -- thinner
         // air and the height to fall through reach further, so it launches
@@ -1168,6 +1169,7 @@ namespace NOrders
         // from our speed and height and the target's as they are now. After
         // the salvo the combat pilot has it, supporting the shot as it would.
         private const float BvrLoft = 1500f, BvrMargin = 0.95f;
+        private const float SafeLowLevel = 800f;      // lowest an intercept noses down to, over the ground
         // Heights above sea level: a shot needing more than BvrTooHigh is not
         // climbed for; the flight holds at BvrHold and closes until the height
         // it needs is down to BvrHold, then climbs to that and fires.
@@ -1250,6 +1252,7 @@ namespace NOrders
             {
                 flight.SalvoLeft = 0;
                 if (FlightOrders.StartCrank(flight, info)) return;
+                if (SlowAirTarget(target)) { FlightOrders.EgressNow(flight); return; }
                 CompleteRunIn(pilot, closing + " missile(s) closing, its shot taken");
                 return;
             }
@@ -1285,9 +1288,13 @@ namespace NOrders
                 float coneLimit = needs.minAlignment > 0f ? needs.minAlignment : 30f;
                 Vector3 flatTo = toTarget; flatTo.y = 0f;
                 float below = Mathf.Atan2(here.y - known.y, Mathf.Max(flatTo.magnitude, 1f)) * Mathf.Rad2Deg;
+                // Only as far down as brings it to half the cone at this range,
+                // and never below 800 m over the ground: diving to 300 m over
+                // a helicopter among hills is how one went in.
                 if (below > coneLimit * 0.6f)
                 {
-                    flight.Altitude = Mathf.Max(known.y - ground + 300f, MinimumClearance);
+                    float over = flatTo.magnitude * Mathf.Tan(coneLimit * 0.5f * Mathf.Deg2Rad);
+                    flight.Altitude = Mathf.Max(known.y - ground + over, SafeLowLevel, MinimumClearance);
                     flight.Doing("LAUNCHING · nose down · " + UnitConverter.DistanceReading(range));
                 }
 
@@ -1323,6 +1330,7 @@ namespace NOrders
                 if (station.Ammo <= 0 || flight.SalvoLeft <= 0)
                 {
                     if (FlightOrders.StartCrank(flight, info)) return;
+                    if (SlowAirTarget(target)) { FlightOrders.EgressNow(flight); return; }
                     CompleteRunIn(pilot, "launched");
                 }
             }

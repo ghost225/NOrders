@@ -1290,6 +1290,15 @@ namespace NOrders
             return true;
         }
 
+        // Weapons away at something that cannot chase (a helicopter): leave
+        // as from a ground target, rather than hand to the combat pilot.
+        internal static void EgressNow(Flight flight)
+        {
+            if (flight == null) return;
+            flight.RunInDone = true;
+            Egress(flight);
+        }
+
         // Away from the threat, never through it.
         //
         // Steering toward home is wrong whenever home lies beyond the target:
