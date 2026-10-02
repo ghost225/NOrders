@@ -19,6 +19,7 @@ namespace NOrders
         internal const float ColdSeconds = 30f;       // the egress that follows, against an air target
         internal const float Descent = 3000f;         // down by up to this much
         internal const float FloorAboveGround = 1500f;
+        internal const float MaxDiveDegrees = 7f;
         private const float Margin = 8f;              // short of the cone edge, for the turn's wander
         private const float DefaultCone = 60f;
 

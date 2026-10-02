@@ -498,11 +498,12 @@ namespace NOrders
         // The crank itself. The targets' bearings are averaged and the nose
         // set off that by as much as the radar's cone allows with the widest
         // of them still inside it, and their elevation allowed for; the side
-        // is whichever the nose is already on, then kept. Down at a shallow
-        // seven degrees to the crank's floor.
+        // is whichever the nose is already on, then kept. Down as height and
+        // speed allow, to the crank's floor.
         private readonly List<Unit> crankTargets = new List<Unit>();
         private float crankScanAt = -1f;
         private string crankNote;
+        private float crankNoteAt;
 
         private void FlyCrank()
         {
@@ -548,18 +549,40 @@ namespace NOrders
                 flight.CrankSide = Vector3.SignedAngle(centre, Flat(aircraft.transform.forward), Vector3.up) >= 0f ? 1 : -1;
             Vector3 heading = Quaternion.AngleAxis(offset * flight.CrankSide, Vector3.up) * centre;
 
+            // The descent is earned, not set: the full seven degrees only with
+            // height and speed in hand, easing to level flight approaching the
+            // floor (1,500 m over whatever ground is under the aim point), when
+            // slow (under corner speed it holds height and keeps its energy)
+            // and when fast (diving towards top speed only adds more). Held
+            // as height over the ground ahead, so rising terrain lifts it.
             const float reach = 5000f;
-            float aimY = Mathf.Max(flight.CrankFloor, here.y - reach * 0.12f);
+            float agl = aircraft.radarAlt;
+            float floorAgl = Mathf.Min(Crank.FloorAboveGround, agl);            // started low: hold, never climb for it
+            float byHeight = Mathf.Clamp01((agl - Crank.FloorAboveGround) / Crank.FloorAboveGround);
+            float corner = parameters != null ? parameters.cornerSpeed : 0f;
+            float top = parameters != null ? parameters.maxSpeed : 0f;
+            float bySpeed = 1f;
+            if (corner > 0f) bySpeed = Mathf.Min(bySpeed, Mathf.Clamp01((aircraft.speed - corner * 1.1f) / (corner * 0.3f)));
+            if (top > 0f) bySpeed = Mathf.Min(bySpeed, 1f - Mathf.Clamp01((aircraft.speed - top * 0.8f) / (top * 0.15f)));
+            float angle = Crank.MaxDiveDegrees * Mathf.Min(byHeight, bySpeed);
+            float aimAgl = agl - reach * Mathf.Tan(angle * Mathf.Deg2Rad);
+            aimAgl = Mathf.Max(aimAgl, floorAgl, flight.CrankFloor - ground);  // and no more than the crank's own drop
             float ordered = flight.Altitude;
-            flight.Altitude = Mathf.Max(aimY - ground, MinimumClearance);
+            flight.Altitude = Mathf.Max(aimAgl, MinimumClearance);
             try { Steer(here + heading * reach); }
             finally { flight.Altitude = ordered; }
 
             int guided = crankTargets.Count;
             string note = "CRANKING · " + offset.ToString("0") + "° off · guiding on " + guided + " target" + (guided == 1 ? "" : "s");
             flight.Doing(note);
-            string trace = offset.ToString("0") + "° " + (flight.CrankSide > 0 ? "right" : "left") + " of " + guided + " · cone " + cone.ToString("0") + "°";
-            if (trace != crankNote) { crankNote = trace; Tracing.Flight("[flight] " + flight.Name + " · crank · " + trace + " · alt " + aircraft.radarAlt.ToString("0") + " m"); }
+            string trace = offset.ToString("0") + "° " + (flight.CrankSide > 0 ? "right" : "left") + " of " + guided + " · cone " + cone.ToString("0") + "° · descent " + angle.ToString("0") + "°";
+            string key = flight.CrankSide + "/" + guided;
+            if (key != crankNote || now >= crankNoteAt)
+            {
+                crankNote = key;
+                crankNoteAt = now + 10f;
+                Tracing.Flight("[flight] " + flight.Name + " · crank · " + trace + " · alt " + aircraft.radarAlt.ToString("0") + " m · " + aircraft.speed.ToString("0") + " m/s");
+            }
         }
 
         // Hold off the emitter and keep the pod on it. The pod switches itself
