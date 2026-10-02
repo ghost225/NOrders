@@ -488,10 +488,78 @@ namespace NOrders
 
         private void FlyEgress()
         {
+            if (flight.Cranking) { FlyCrank(); return; }
             float ordered = flight.Altitude;
             flight.Altitude = Mathf.Min(ordered, Tuning.EgressAltitude);
             Steer(flight.EgressPoint);
             flight.Altitude = ordered;
+        }
+
+        // The crank itself. The targets' bearings are averaged and the nose
+        // set off that by as much as the radar's cone allows with the widest
+        // of them still inside it, and their elevation allowed for; the side
+        // is whichever the nose is already on, then kept. Down at a shallow
+        // seven degrees to the crank's floor.
+        private readonly List<Unit> crankTargets = new List<Unit>();
+        private float crankScanAt = -1f;
+        private string crankNote;
+
+        private void FlyCrank()
+        {
+            float now = Time.timeSinceLevelLoad;
+            if (now - crankScanAt >= 0.5f || crankScanAt > now)
+            {
+                crankScanAt = now;
+                Crank.Supported(aircraft, crankTargets);
+            }
+            FactionHQ hq = aircraft.NetworkHQ;
+            GlobalPosition here = aircraft.GlobalPosition();
+            float ground = here.y - aircraft.radarAlt;
+            Vector3 centre = Vector3.zero;
+            var flats = new List<Vector3>();
+            float elevation = 0f;
+            foreach (Unit target in crankTargets)
+            {
+                if (Host.Dead(target) || hq == null || !hq.TryGetKnownPosition(target, out GlobalPosition known)) continue;
+                Vector3 to = known - here;
+                Vector3 flat = new Vector3(to.x, 0f, to.z);
+                if (flat.sqrMagnitude < 1f) continue;
+                elevation = Mathf.Max(elevation, Mathf.Abs(Mathf.Atan2(to.y, flat.magnitude) * Mathf.Rad2Deg));
+                flats.Add(flat.normalized);
+                centre += flat.normalized;
+            }
+            if (flats.Count == 0 || centre.sqrMagnitude < 0.01f)
+            {
+                // Nothing to look at: fly the egress line meanwhile.
+                float held = flight.Altitude;
+                flight.Altitude = Mathf.Min(held, Tuning.EgressAltitude);
+                Steer(flight.EgressPoint);
+                flight.Altitude = held;
+                return;
+            }
+            centre.Normalize();
+            float spread = 0f;
+            foreach (Vector3 flat in flats) spread = Mathf.Max(spread, Vector3.Angle(centre, flat));
+
+            float cone = Crank.Cone(aircraft);
+            float offset = Mathf.Sqrt(Mathf.Max(cone * cone - elevation * elevation, 0f)) - spread;
+            offset = Mathf.Clamp(offset, 0f, 60f);
+            if (flight.CrankSide == 0)
+                flight.CrankSide = Vector3.SignedAngle(centre, Flat(aircraft.transform.forward), Vector3.up) >= 0f ? 1 : -1;
+            Vector3 heading = Quaternion.AngleAxis(offset * flight.CrankSide, Vector3.up) * centre;
+
+            const float reach = 5000f;
+            float aimY = Mathf.Max(flight.CrankFloor, here.y - reach * 0.12f);
+            float ordered = flight.Altitude;
+            flight.Altitude = Mathf.Max(aimY - ground, MinimumClearance);
+            try { Steer(here + heading * reach); }
+            finally { flight.Altitude = ordered; }
+
+            int guided = crankTargets.Count;
+            string note = "CRANKING · " + offset.ToString("0") + "° off · guiding on " + guided + " target" + (guided == 1 ? "" : "s");
+            flight.Doing(note);
+            string trace = offset.ToString("0") + "° " + (flight.CrankSide > 0 ? "right" : "left") + " of " + guided + " · cone " + cone.ToString("0") + "°";
+            if (trace != crankNote) { crankNote = trace; Tracing.Flight("[flight] " + flight.Name + " · crank · " + trace + " · alt " + aircraft.radarAlt.ToString("0") + " m"); }
         }
 
         // Hold off the emitter and keep the pod on it. The pod switches itself
@@ -1088,6 +1156,7 @@ namespace NOrders
             if (closing >= allowed && fired)
             {
                 flight.SalvoLeft = 0;
+                if (FlightOrders.StartCrank(flight, info)) return;
                 CompleteRunIn(pilot, closing + " missile(s) closing, its shot taken");
                 return;
             }
@@ -1158,7 +1227,11 @@ namespace NOrders
                     Tracing.Flight("[flight] " + flight.Name + " · launched " + info.weaponName + " at " + (range / 1000f).ToString("0.0") +
                         " km from " + aircraft.radarAlt.ToString("0") + " m · " + Mathf.Max(flight.SalvoLeft, 0) + " left in the salvo");
                 }
-                if (station.Ammo <= 0 || flight.SalvoLeft <= 0) CompleteRunIn(pilot, "launched");
+                if (station.Ammo <= 0 || flight.SalvoLeft <= 0)
+                {
+                    if (FlightOrders.StartCrank(flight, info)) return;
+                    CompleteRunIn(pilot, "launched");
+                }
             }
             finally { flight.Altitude = ordered; }
         }

@@ -90,6 +90,11 @@ namespace NOrders
         public GlobalPosition EgressPoint;
         public float EgressUntil;
         public float NextEgressPlan;
+        // Egress after an air-to-air radar shot starts as a crank (see Crank):
+        // targets held at the radar's edge until the missiles are on their own.
+        public bool Cranking;
+        public int CrankSide;
+        public float CrankUntil, CrankFloor, CrankStarted;
         public FlightThreat Threat;
         public bool ThreatIsInfrared;       // flares matter, and it must be let in much closer
         public float ThreatRange = float.PositiveInfinity;
@@ -318,7 +323,7 @@ namespace NOrders
                         : (Attackers.ContainsKey(fighting) ? "ATTACKING ATTACKER · " : "ENGAGING · ") + ShipNames.Of(fighting);
                 if (Mode == FlightMode.Strike && RunInDone && fighting != null) return "ATTACKING · " + ShipNames.Of(fighting) + ListProgress();
                 if (activity != null && Time.timeSinceLevelLoad < activityUntil) return activity + (Mode == FlightMode.Strike ? ListProgress() : "");
-                if (Mode == FlightMode.Egress) return "EGRESSING" + ListProgress();
+                if (Mode == FlightMode.Egress) return (Cranking ? "CRANKING" : "EGRESSING") + ListProgress();
                 if (Mode == FlightMode.Orbit && StrikeList.Count > 0) return "HOLDING · missiles on the way" + ListProgress();
                 if (Aircraft != null && FlightOrders.FirstPilot(Aircraft)?.currentState is AIPilotLandingState landing)
                 {
@@ -381,7 +386,7 @@ namespace NOrders
                 case FlightMode.Station: return "Station on " + (StationShip != null ? ShipNames.Of(StationShip) : HomeName);
                 case FlightMode.Strike: return !Host.Dead(Target)
                     ? "Strike · " + (Target.definition?.unitName ?? Target.name) : "Strike · target gone";
-                case FlightMode.Egress: return "Egressing · weapons away";
+                case FlightMode.Egress: return Cranking ? "Cranking · guiding its missiles" : "Egressing · weapons away";
                 case FlightMode.Cargo: return SupplyShip != null ? "Naval supply · " + ShipNames.Of(SupplyShip)
                     : (Airdrop ? "Airdrop" : "Delivery") + " · inbound to the zone";
                 case FlightMode.Jam:
@@ -811,7 +816,20 @@ namespace NOrders
                     if (now >= 0 && now < flight.AmmoAtAttack && !StrikePlans.FollowUp(flight)) Egress(flight);
                 }
 
-                if (flight.Mode == FlightMode.Egress)
+                if (flight.Mode == FlightMode.Egress && flight.Cranking)
+                {
+                    // Cold once nothing is left to guide, or after long enough.
+                    int guided = Time.timeSinceLevelLoad < flight.NextEgressPlan ? 1 : Crank.Supported(flight.Aircraft, null);
+                    if (Time.timeSinceLevelLoad >= flight.NextEgressPlan) flight.NextEgressPlan = Time.timeSinceLevelLoad + 0.5f;
+                    if ((guided == 0 && Time.timeSinceLevelLoad - flight.CrankStarted > 3f) || Time.timeSinceLevelLoad >= flight.CrankUntil)
+                    {
+                        flight.Cranking = false;
+                        flight.EgressUntil = Time.timeSinceLevelLoad + Crank.ColdSeconds;
+                        PlanEgress(flight);
+                        Tracing.Flight("[flight] " + flight.Name + " · " + (guided == 0 ? "missiles on their own" : "crank timed out") + ", going cold");
+                    }
+                }
+                else if (flight.Mode == FlightMode.Egress)
                 {
                     // The threat picture moves; so should the escape route.
                     if (Time.timeSinceLevelLoad >= flight.NextEgressPlan)
@@ -819,9 +837,11 @@ namespace NOrders
                         flight.NextEgressPlan = Time.timeSinceLevelLoad + 2f;
                         PlanEgress(flight);
                     }
-                    bool clear = Host.Dead(flight.Target) ||
+                    // Against an air target, the time cold is the egress:
+                    // range from a fighter says little about being safe from it.
+                    bool clear = Host.Dead(flight.Target) || (!IsAirTarget(flight.Target) &&
                         FastMath.Distance(flight.Aircraft.GlobalPosition(), flight.Target.GlobalPosition())
-                            >= Tuning.StandoffMetres;
+                            >= Tuning.StandoffMetres);
                     if ((clear || Time.timeSinceLevelLoad >= flight.EgressUntil) && flight.StrikeList.Count > 0)
                         StrikePlans.Next(flight, "after the pass");
                     else if (clear || Time.timeSinceLevelLoad >= flight.EgressUntil)
@@ -1212,6 +1232,7 @@ namespace NOrders
             flight.InLaunchRangeSince = -1f;
             if (flight.Mode != FlightMode.Strike && flight.Mode != FlightMode.Egress) flight.PreviousMode = flight.Mode;
             flight.Target = target;
+            flight.Cranking = false;
             flight.AmmoAtAttack = TotalAmmo(flight.Aircraft);
             flight.Route.Clear();
             flight.Mode = FlightMode.Strike;
@@ -1236,12 +1257,37 @@ namespace NOrders
         // and fly it out to standoff before deciding what to do next.
         private static void Egress(Flight flight)
         {
+            flight.Cranking = false;
             flight.Mode = FlightMode.Egress;
             flight.EgressUntil = Time.timeSinceLevelLoad + Tuning.EgressSeconds;
             PlanEgress(flight);
             flight.Adopted = false;                 // take it back off the native pilot
             flight.Interrupted = false;
             Host.LogInfo("[flight] " + flight.Name + " · weapons away, egressing");
+        }
+
+        // After an air-to-air radar shot: crank while missiles are flying on
+        // this aircraft's radar. False with none such (a heat-seeker, or an
+        // active round already on its own): the caller carries on as before.
+        internal static bool StartCrank(Flight flight, WeaponInfo fired)
+        {
+            Aircraft aircraft = flight?.Aircraft;
+            // The round just fired may not be in the registry this frame.
+            if (aircraft == null || (!Crank.RadarGuided(fired) && Crank.Supported(aircraft, null) == 0)) return false;
+            GlobalPosition here = aircraft.GlobalPosition();
+            float ground = here.y - aircraft.radarAlt;
+            flight.Mode = FlightMode.Egress;
+            flight.Cranking = true;
+            flight.CrankSide = 0;
+            flight.CrankUntil = Time.timeSinceLevelLoad + Crank.MaxSeconds;
+            flight.CrankStarted = Time.timeSinceLevelLoad;
+            flight.CrankFloor = Mathf.Min(here.y, Mathf.Max(ground + Crank.FloorAboveGround, here.y - Crank.Descent));
+            flight.EgressUntil = flight.CrankUntil + Crank.ColdSeconds;
+            flight.RunInDone = true;
+            flight.Adopted = false;
+            flight.Interrupted = false;
+            Host.LogInfo("[flight] " + flight.Name + " · missiles away, cranking");
+            return true;
         }
 
         // Away from the threat, never through it.
