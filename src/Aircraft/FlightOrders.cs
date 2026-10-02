@@ -1728,8 +1728,45 @@ namespace NOrders
                 bestScore = score;
                 best = station;
             }
+            if (best != null && IsAirTarget(target)) best = ByReach(aircraft, target, best, bestScore) ?? best;
             return best ?? gun;
         }
+
+        // Against an aircraft the game's own effectiveness score is not the
+        // whole answer: it rates a heat-seeker over a radar missile against a
+        // helicopter, and an FS-41 with four AAM-45s aboard went after one
+        // with its single IR missile from 30 km -- closing to the IR round's
+        // short reach dragged it down among the hills. Of the missiles that
+        // score at least 30% of the best, the best one that reaches the target
+        // from here; none does yet, the one reaching furthest, so the
+        // intercept is flown and launched from standoff.
+        private static WeaponStation ByReach(Aircraft aircraft, Unit target, WeaponStation best, float bestScore)
+        {
+            float range = FastMath.Distance(aircraft.GlobalPosition(), target.GlobalPosition());
+            WeaponStation inReach = null, furthest = null;
+            float inReachScore = 0f, furthestReach = 0f;
+            foreach (WeaponStation station in aircraft.weaponStations)
+            {
+                WeaponInfo info = station?.WeaponInfo;
+                if (info == null || info.gun || !info.missile || station.Ammo <= 0) continue;
+                float score = WeaponOrders.Opportunity(info, target);
+                if (score < bestScore * 0.3f) continue;
+                float reach = info.targetRequirements.maxRange;
+                if (reach >= range && score > inReachScore) { inReachScore = score; inReach = station; }
+                if (reach > furthestReach) { furthestReach = reach; furthest = station; }
+            }
+            WeaponStation chosen = inReach ?? furthest;
+            if (chosen != null && chosen != best && Time.unscaledTime >= reachNoteAt)
+            {
+                reachNoteAt = Time.unscaledTime + 5f;
+                Tracing.Flight("[flight] weapon for " + (target.definition?.unitName ?? "air target") + " at " + (range / 1000f).ToString("0.0") + " km · " +
+                    chosen.WeaponInfo.weaponName + " (reaches " + (chosen.WeaponInfo.targetRequirements.maxRange / 1000f).ToString("0") + " km, score " +
+                    WeaponOrders.Opportunity(chosen.WeaponInfo, target).ToString("0.00") + ") over " +
+                    best.WeaponInfo.weaponName + " (reaches " + (best.WeaponInfo.targetRequirements.maxRange / 1000f).ToString("0") + " km, score " + bestScore.ToString("0.00") + ")");
+            }
+            return chosen;
+        }
+        private static float reachNoteAt;
 
         public static void Engage(Flight flight)
         {
