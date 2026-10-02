@@ -46,7 +46,14 @@ namespace NOrders
             // helicopter arrives from its takeoff state with auto-hover still
             // engaged, and the controls filter then fights the autopilot's
             // collective all the way into the ground.
-            aircraft.SetFlightAssistToDefault();
+            //
+            // A fixed-wing gets flight assist on, as the combat state does.
+            // ToDefault only tells the controls filter and leaves the
+            // aircraft's own flag where the taxi state put it -- off -- and
+            // with it off the fly-by-wire's G limit and the AoA limiters do
+            // nothing: our jets flew off the deck with no limits at all.
+            if (aircraft.autopilot is AutopilotPlane) aircraft.SetFlightAssist(enabled: true);
+            else aircraft.SetFlightAssistToDefault();
             aircraft.SetGear(deployed: false);
             heloHold = -1f;                         // start from wherever it is
             ControlsFilter filter = aircraft.GetControlsFilter();
@@ -893,6 +900,8 @@ namespace NOrders
                 }
                 destination = point;
                 LimitSpeed();
+                // The game's own G and AoA limits, kept on (see EnterState).
+                if (!aircraft.flightAssist) aircraft.SetFlightAssist(enabled: true);
                 autopilot.AutoAim(point, aimVelocity: true, ignoreCollisions: false, runwayAlign: false,
                     effort: 1f, bankAllowed: bank, followTerrain: followTerrain,
                     altitudeHold: aboveGround, targetVelocity: velocity);
