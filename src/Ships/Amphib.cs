@@ -303,6 +303,7 @@ namespace NOrders
             internal Vector3 LaneAshore, LaneWay;
             internal Vector3 Muster;            // where it waits astern for the rest
             internal bool Mustering, MusterOrdered;
+            internal ShipAI.ShipAIState Logged = (ShipAI.ShipAIState)(-1);
         }
 
         private static readonly List<Sortie> sorties = new List<Sortie>();
@@ -683,6 +684,14 @@ namespace NOrders
             Host.LogInfo("[amphib] " + sortie.Name + " held on the beach; landing it");
         }
 
+        private static string Aboard(Ship craft)
+        {
+            UnitStorage hold = craft.GetComponentInChildren<UnitStorage>();
+            if (hold == null) return "";
+            if (UnloadFullyPatch.StillUnloading(hold)) return " · still putting vehicles out";
+            return hold.HasUnits() ? " · load aboard" : "";
+        }
+
         // ---- every frame -------------------------------------------------------------
 
         private static object tickLevel;
@@ -719,6 +728,11 @@ namespace NOrders
                 }
                 sortie.Name = ShipNames.Of(craft);                 // named a moment after it spawns
                 ShipAI.ShipAIState state = sortie.Ai != null ? sortie.Ai.state : ShipAI.ShipAIState.holding;
+                if (state != sortie.Logged)
+                {
+                    sortie.Logged = state;
+                    Host.LogInfo("[amphib] " + sortie.Name + " · " + state + " · " + Status(sortie) + Aboard(sortie.Craft));
+                }
                 if (state == ShipAI.ShipAIState.unloading && !sortie.Unloaded)
                 {
                     sortie.Unloaded = true;
@@ -766,6 +780,70 @@ namespace NOrders
 
     // Hosts the launch coroutines on the carrier.
     internal sealed class AmphibRunner : MonoBehaviour { }
+
+    // A craft on the beach goes home 60 s after it starts unloading, whether
+    // its load is off or not. The hold puts vehicles out one at a time, each
+    // waiting for the last to clear the ramp, so a full craft is still
+    // unloading at a minute: it backed off the beach with a vehicle on its
+    // ramp and the rest still to come, spawned wherever it then was. It now
+    // stays while its hold is still putting vehicles out, up to four minutes
+    // in all for a vehicle that never clears the ramp; the game sends it home
+    // itself once the hold is done.
+    [HarmonyPatch(typeof(LandingCraftAI), "Update")]
+    internal static class UnloadFullyPatch
+    {
+        private const string Name = "Unload fully";
+        private const float Cap = 240f;
+        private static readonly AccessTools.FieldRef<LandingCraftAI, float> UnloadingTime =
+            AccessTools.FieldRefAccess<LandingCraftAI, float>("unloadingTime");
+        private static readonly AccessTools.FieldRef<LandingCraftAI, UnitStorage> Storage =
+            AccessTools.FieldRefAccess<LandingCraftAI, UnitStorage>("unitStorage");
+        private static readonly FieldInfo ShipOf = AccessTools.Field(typeof(ShipAI), "ship");
+        private static readonly AccessTools.FieldRef<UnitStorage, List<UnitDefinition>> Deploying =
+            AccessTools.FieldRefAccess<UnitStorage, List<UnitDefinition>>("deploying");
+        private static readonly AccessTools.FieldRef<UnitStorage, Unit> LastDeployed =
+            AccessTools.FieldRefAccess<UnitStorage, Unit>("lastDeployedUnit");
+        private static readonly AccessTools.FieldRef<UnitStorage, Transform> DeployPoint =
+            AccessTools.FieldRefAccess<UnitStorage, Transform>("deployTransform");
+        private static readonly Dictionary<LandingCraftAI, float> since = new Dictionary<LandingCraftAI, float>();
+
+        private static void Prefix(LandingCraftAI __instance)
+        {
+            if (!Guard.Ok(Name)) return;
+            try
+            {
+                if (__instance.state != ShipAI.ShipAIState.unloading)
+                {
+                    if (since.Count > 0) since.Remove(__instance);
+                    return;
+                }
+                if (!(ShipOf?.GetValue(__instance) is Ship ship) || !Ownership.Acts(ship)) return;
+                UnitStorage storage = Storage(__instance);
+                if (storage == null || !StillUnloading(storage)) return;
+                if (!since.TryGetValue(__instance, out float start)) since[__instance] = start = Time.timeSinceLevelLoad;
+                float held = Time.timeSinceLevelLoad - start;
+                if (held < Cap) { UnloadingTime(__instance) = 0f; return; }
+                if (held < Cap * 2f)
+                {
+                    since[__instance] = start - Cap * 2f;      // said once
+                    Host.LogInfo("[amphib] " + ShipNames.Of(ship) + " still unloading after " + (int)Cap + " s; letting it go home");
+                }
+            }
+            catch (Exception ex) { Guard.Failed(Name, ex); }
+        }
+
+        // Its own word for it is no use: a hold that was empty when told to
+        // deploy says it is deploying for good. Vehicles still to come out, or
+        // the last one still on the ramp, is unloading.
+        internal static bool StillUnloading(UnitStorage storage)
+        {
+            if (storage.HasFinishedDeploying()) return false;
+            if (storage.HasUnits() || Deploying(storage)?.Count > 0) return true;
+            Unit last = LastDeployed(storage);
+            Transform point = DeployPoint(storage);
+            return last != null && !last.disabled && point != null && Vector3.Distance(last.transform.position, point.position) < 40f;
+        }
+    }
 
     // A carrier the player is working with does not empty its own hold: the
     // game's amphibious AI deploys everything aboard once it is near an
