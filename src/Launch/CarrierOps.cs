@@ -368,10 +368,14 @@ namespace NOrders
                 purchased = true;
             }
 
+            // Expected before the spawn: an open hangar spawns synchronously
+            // and the capture hook must find the request (see ExpectLaunch).
+            FlightOrders.ExpectLaunch(deck, plan.Definition, loadout, callsign, wing);
             Airbase.TrySpawnResult result = deck.TrySpawnAircraft(null, plan.Definition,
                 plan.Livery, loadout, Mathf.Clamp01(plan.Fuel));
             if (!result.Allowed)
             {
+                FlightOrders.CancelLaunch(loadout);
                 // Nothing left the deck, so nothing was spent.
                 if (payer != null) payer.AddAllocation(price);
                 if (stocked || purchased) hq.ModifyUnitSupply(plan.Definition, -1);
@@ -386,7 +390,6 @@ namespace NOrders
             }
 
             Remember(plan);
-            FlightOrders.ExpectLaunch(deck, plan.Definition, loadout, callsign, wing);
             Host.LogInfo("[deck] " + callsign + " · " + TakeoffCheck.Trace(TakeoffCheck.Estimate(plan, deck)));
             reason = "Launching " + (string.IsNullOrEmpty(callsign) ? "" : callsign + " · ") +
                 plan.Definition.unitName + " · " + (plan.Fuel * 100f).ToString("0") + "% fuel · " + plan.Summary() +

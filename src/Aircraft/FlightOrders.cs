@@ -440,6 +440,17 @@ namespace NOrders
             persistent.player = player;
         }
 
+        // Registered BEFORE the deck is asked to spawn: with the hangar door
+        // already open the game spawns synchronously inside TrySpawnAircraft,
+        // the capture hook fires at once and finds nothing expected, and the
+        // aircraft waits 20 s for the proximity fallback. Two thirds of a
+        // soak's launches went that way. A launch the deck then refuses is
+        // cancelled with CancelLaunch.
+        internal static void CancelLaunch(NuclearOption.SavedMission.Loadout loadout)
+        {
+            for (int i = pending.Count - 1; i >= 0; i--) if (ReferenceEquals(pending[i].Loadout, loadout)) pending.RemoveAt(i);
+        }
+
         internal static void ExpectLaunch(Airbase field, AircraftDefinition definition,
             NuclearOption.SavedMission.Loadout loadout, string callsign, string wing = null)
         {
