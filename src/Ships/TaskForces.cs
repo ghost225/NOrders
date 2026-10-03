@@ -63,6 +63,7 @@ namespace NOrders
         internal float OffStation;
         internal GlobalPosition Station;
         internal bool GivingWay;
+        internal float ApartSaidAt = -100f;
         internal bool Shoal;                     // its station was pulled in off shallow water
         internal bool Joiner;                    // joined a custom formation and given a station astern
     }
@@ -850,6 +851,7 @@ namespace NOrders
             }
 
             escort.GivingWay = GiveWay(force, escort, ref aim, ref knots);
+            if (!escort.GivingWay) escort.GivingWay = KeepApart(force, escort, course, ref aim, ref knots);
 
             issuing = true;
             try
@@ -911,6 +913,65 @@ namespace NOrders
                 return true;
             }
             return false;
+        }
+
+        // Already too close, whatever the closing speed: the give-way rule
+        // only sees contacts closing faster than 1.5 m/s, so two escorts
+        // pressed together -- the mission spawns pairs side by side, and one
+        // whose station is across the other edges into it -- stayed locked
+        // hull to hull for good, and a carrier ran down two destroyers that
+        // sat in its path. An escort within a hull's length of another ship
+        // of the force, or in the guide's path inside two kilometres ahead,
+        // steers away at steerage speed before going on to its station. Both
+        // of a locked pair steer away from each other, which is what parts them.
+        private static bool KeepApart(TaskForce force, Escort escort, Vector3 course, ref GlobalPosition aim, ref float knots)
+        {
+            Ship ship = escort.Ship;
+            Ship guide = force.Guide;
+            GlobalPosition here = ship.GlobalPosition();
+            Vector3 away = Vector3.zero; bool ahead = false; string from = null;
+
+            // Out of the guide's path.
+            if (guide != null && !guide.disabled)
+            {
+                Vector3 gfwd = guide.transform.forward; gfwd.y = 0f; gfwd.Normalize();
+                Vector3 rel = here - guide.GlobalPosition(); rel.y = 0f;
+                float along = Vector3.Dot(rel, gfwd);
+                Vector3 side = rel - gfwd * along;
+                float clear = guide.maxRadius + ship.maxRadius + 150f;
+                if (along > -guide.maxRadius && along < 2000f && side.magnitude < clear)
+                {
+                    away += (side.sqrMagnitude > 1f ? side.normalized : new Vector3(gfwd.z, 0f, -gfwd.x)) * 2f;
+                    from = ShipNames.Of(guide) + "'s path";
+                }
+            }
+            // Off any ship of the force it is touching or nearly so.
+            var others = new List<Ship>();
+            if (guide != null) others.Add(guide);
+            foreach (Escort e in force.Escorts) if (e != escort && e.Ship != null) others.Add(e.Ship);
+            foreach (Ship other in others)
+            {
+                if (other.disabled) continue;
+                Vector3 offset = other.GlobalPosition() - here; offset.y = 0f;
+                float safe = (ship.maxRadius + other.maxRadius) * 1.3f + 120f;
+                if (offset.magnitude >= safe) continue;
+                away -= offset.sqrMagnitude > 1f ? offset.normalized : new Vector3(course.z, 0f, -course.x);
+                if (Vector3.Dot(offset, course) > 0f) ahead = true;
+                if (from == null) from = ShipNames.Of(other);
+            }
+            if (from == null) return false;
+            away.y = 0f;
+            if (away.sqrMagnitude < 0.01f) away = new Vector3(course.z, 0f, -course.x);
+            aim = here + (away.normalized * 0.75f + course * 0.25f).normalized * 1500f;
+            // Steerage either way; slower if the other is ahead of it, faster if astern.
+            knots = ahead ? Mathf.Max(4f, knots * 0.6f) : Mathf.Max(knots, 8f);
+            escort.NextIssue = 0f;
+            if (Time.timeSinceLevelLoad - escort.ApartSaidAt > 30f)
+            {
+                escort.ApartSaidAt = Time.timeSinceLevelLoad;
+                Tracing.Nav("[tf] " + force.Name + " · " + ShipNames.Of(ship) + " · too close to " + from + ", standing off");
+            }
+            return true;
         }
 
         // The fastest the force can go and still keep station: nine tenths of
