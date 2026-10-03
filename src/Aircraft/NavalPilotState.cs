@@ -234,7 +234,9 @@ namespace NOrders
                     // the water at 38 m/s -- level at full power until the
                     // speed is back, unless nearly on the ground, where a
                     // gentle climb is the only way out.
-                    if (slow && !low) flight.Altitude = Mathf.Max(aircraft.radarAlt - 600f, MinimumClearance);
+                    // ... and never below 300 m over the ground: a Vortex fed
+                    // "600 m lower" every tick from 2,300 m followed it in.
+                    if (slow && !low) flight.Altitude = Mathf.Max(aircraft.radarAlt - 600f, LowBar + 150f);
                     else if (slow) flight.Altitude = aircraft.radarAlt < 40f ? aircraft.radarAlt + 80f : aircraft.radarAlt;
                     else flight.Altitude = Mathf.Clamp(aircraft.radarAlt + 300f, LowBar + 150f, Mathf.Max(ordered, LowBar + 150f));
                     flight.Doing("RECOVERING ENERGY");
@@ -902,7 +904,12 @@ namespace NOrders
                 // and altitudeHold is consulted only for terrain following.
                 // Bank is held well short of the 180 degrees the combat state
                 // allows, since this is transit rather than evasion.
-                bool followTerrain = aboveGround < 400f;
+                // Terrain following up to 1,500 m of ordered height: below
+                // that the order means height over the ground along the way,
+                // not over the ground at the point. Two Ifrits on a 600 m
+                // run-in held the height of the target's ground while the land
+                // rose under them -- radar altitude 354, 231, 46 -- and hit it.
+                bool followTerrain = aboveGround < 1500f;
                 GlobalPosition from = aircraft.GlobalPosition();
                 // Never a steering point close in: the autopilot pulls up hard
                 // -- two kilometres of up on a one-kilometre vector, fifty
@@ -951,15 +958,29 @@ namespace NOrders
                 // the ground there; the autopilot's own terrain warning still
                 // pulls up for anything in the way. Not on an attack run,
                 // which may need its nose well down on a low target.
-                if (flight.Mode != FlightMode.Strike)
                 {
                     Vector3 to = point - from; to.y = 0f;
                     float run = Mathf.Max(to.magnitude, MinSteerDistance);
                     float groundThere = point.y - Mathf.Max(aboveGround, MinimumClearance);
-                    float low = from.y - run * Mathf.Tan(MaxSteerDescent * Mathf.Deg2Rad);
-                    float high = Mathf.Max(from.y + run * Mathf.Tan(MaxSteerClimb * Mathf.Deg2Rad), groundThere + MinimumClearance);
-                    float y = Mathf.Clamp(point.y, low, high);
-                    point += Vector3.up * (y - point.y);
+                    float groundFloor = groundThere + MinimumClearance;
+                    if (flight.Mode != FlightMode.Strike)
+                    {
+                        // The descent allowed shrinks with speed: at 80% of top
+                        // speed three degrees, not ten. Two King Vipers egressing
+                        // at 530 m/s dived from 5,500 m to a 200 m egress height
+                        // and could not pull out; nothing was shot at them.
+                        float top = parameters != null ? parameters.maxSpeed : 0f;
+                        float fast = top > 0f ? Mathf.InverseLerp(0.55f * top, 0.85f * top, aircraft.speed) : 0f;
+                        float maxDown = Mathf.Lerp(MaxSteerDescent, 3f, fast);
+                        float low = Mathf.Max(from.y - run * Mathf.Tan(maxDown * Mathf.Deg2Rad), groundFloor);
+                        float high = Mathf.Max(from.y + run * Mathf.Tan(MaxSteerClimb * Mathf.Deg2Rad), groundFloor);
+                        float y = Mathf.Clamp(point.y, low, high);
+                        // And fast, never under 300 m over the ground by steering:
+                        // the evasion code owns the deck, not a transit.
+                        if (fast > 0.5f) y = Mathf.Max(y, groundThere + 300f);
+                        point += Vector3.up * (y - point.y);
+                    }
+                    else if (point.y < groundFloor) point += Vector3.up * (groundFloor - point.y);   // an attack run may nose down, never under the ground
                 }
                 // Overspeed: besides power off, no descent -- a Medusa at
                 // idle still ran to 267 m/s down a ten-degree slope and came
