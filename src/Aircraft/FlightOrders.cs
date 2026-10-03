@@ -2009,7 +2009,13 @@ namespace NOrders
             if (flight.Mode == FlightMode.Strike)
                 return flight.RunInDone || (flight.Threat == FlightThreat.Missile && !flight.ThreatIsInfrared && !Tuning.OwnRadarEvasion);
             if (flight.Mode == FlightMode.Engage) return true;
-            if (flight.Mode == FlightMode.Cargo) return false;       // the transport state has it
+            if (flight.Mode == FlightMode.Cargo) return false;       // the transport state has it (CargoNotchPatch notches it)
+            // A helicopter shot at with a radar missile goes to the game's
+            // helicopter pilot, which notches. Our own radar evasion beams
+            // fixed-wing only, so with it on a helicopter was neither handed
+            // over nor flown off the shot: it kept to its task, at the missile.
+            if (flight.Threat == FlightThreat.Missile && !flight.ThreatIsInfrared && !flight.StandOn &&
+                IsRotary(FirstPilot(flight.Aircraft))) return true;
             // Jamming holds station; only an actual shot takes it off the job.
             if (flight.Mode == FlightMode.Jam) return flight.Threat == FlightThreat.Missile && !flight.ThreatIsInfrared && !Tuning.OwnRadarEvasion;
 
