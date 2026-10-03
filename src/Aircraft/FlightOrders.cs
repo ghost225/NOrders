@@ -106,6 +106,7 @@ namespace NOrders
         internal bool CargoGateAirdrop;
         public string LastThreat;           // the last shot at us, described; for the loss report
         public float LastThreatAt;
+        public Missile LoggedThreat;
         public float LastBurstAt;           // IR defence: when the last string of flares ended
         // A heat-seeker inbound and the flight not on a run-in or in a fight
         // the native pilot is flying: our state flies the beam turn.
@@ -1933,9 +1934,21 @@ namespace NOrders
                 }
                 if (nearestMissile != null)
                 {
-                    flight.LastThreat = (nearestMissile.GetWeaponInfo()?.weaponName ?? nearestMissile.name) + (infrared ? " (heat-seeking)" : " (radar)") +
+                    string seeker = "";
+                    try { seeker = nearestMissile.GetSeekerType(); } catch { }
+                    flight.LastThreat = (nearestMissile.GetWeaponInfo()?.weaponName ?? nearestMissile.name) + (infrared ? " (heat-seeking)" : " (radar" + (seeker.Length > 0 ? ", " + seeker : "") + ")") +
                         " at " + UnitConverter.DistanceReading(nearestShot) + " · " + Describe(flight);
                     flight.LastThreatAt = Time.timeSinceLevelLoad;
+                    // Each new shot once, whoever is flying it -- the native
+                    // pilots log nothing, and a helicopter lost on a strike
+                    // left no word of what hit it or how it stood.
+                    if (nearestMissile != flight.LoggedThreat)
+                    {
+                        flight.LoggedThreat = nearestMissile;
+                        Host.LogInfo("[flight] " + flight.Name + " · shot at · " + flight.LastThreat +
+                            (nearestMissile.owner != null ? " · from " + ShipNames.Of(nearestMissile.owner) : "") +
+                            (flight.StandOn ? " · covered, holding" : ""));
+                    }
                 }
                 IrDefence.Defend(flight, aircraft, threat == FlightThreat.Missile, infrared, nearestShot);
             }

@@ -26,7 +26,9 @@ namespace NOrders
                 nextCheck[aircraft] = now + 1f;
                 if (!Doomed(aircraft, out string why)) continue;
                 Tracing.Flight("[flight] " + flight.Name + " · " + why + " · crew ejecting · " + aircraft.speed.ToString("0") + " m/s at " +
-                    aircraft.radarAlt.ToString("0") + " m · peak " + GLimitPatch.Peak(aircraft).ToString("0.0") + " g");
+                    aircraft.radarAlt.ToString("0") + " m · peak " + GLimitPatch.Peak(aircraft).ToString("0.0") + " g" +
+                    (flight.LastThreat != null && Time.timeSinceLevelLoad - flight.LastThreatAt < 30f
+                        ? " · last shot at it " + (Time.timeSinceLevelLoad - flight.LastThreatAt).ToString("0") + " s ago: " + flight.LastThreat : " · no shot at it in 30 s"));
                 aircraft.StartEjectionSequence();
                 Ejected++;
             }
