@@ -209,8 +209,61 @@ namespace NOrders
                 if (flight == null || flight.Mode != FlightMode.Cargo) return;
                 CargoMissions.Apply(__instance, flight);
                 Trace(aircraft, flight, __instance);
+                liftFor = aircraft;
+                liftFloor = OverWater(aircraft, flight) && FastMath.Distance(aircraft.GlobalPosition(), flight.CargoPoint) > 3000f ? SeaFloor : 0f;
             }
             catch (Exception ex) { Guard.Failed(Name, ex); }
+        }
+
+        // Ibises cruised at 120-138 m/s, 30 m over the sea, pusher at full
+        // (the state asks for full forward thrust whenever the landing zone is
+        // more than a few hundred metres off). At that speed the rotor sagged
+        // below its governed speed, and the game's autopilot answers a sagging
+        // rotor by dropping the collective to nothing -- from 30 m that is the
+        // sea. One shed its blades flying straight and level. So the pusher
+        // eases to neutral from 60% of top speed and is neutral by 75%, and
+        // over open water the transit is flown at 80 m instead of 30.
+        private const float SeaFloor = 80f;
+        internal static Aircraft liftFor;
+        internal static float liftFloor;
+
+        private static void Postfix(AIHeloTransportState __instance)
+        {
+            Aircraft aircraft = liftFor;
+            liftFor = null;
+            if (!Guard.Ok(Name) || aircraft == null) return;
+            try
+            {
+                if (!(aircraft.autopilot is AutopilotHelo) || aircraft.radarAlt < 10f || aircraft.speed < 40f || aircraft.IsAutoHoverEnabled()) return;
+                AircraftParameters p = aircraft.GetAircraftParameters();
+                ControlInputs inputs = aircraft.GetInputs();
+                if (p == null || p.maxSpeed <= 0f || inputs == null) return;
+                float over = Mathf.InverseLerp(p.maxSpeed * 0.6f, p.maxSpeed * 0.75f, aircraft.speed);
+                if (over > 0f) inputs.customAxis1 = Mathf.Min(inputs.customAxis1, Mathf.Lerp(inputs.customAxis1, 0.5f, over));
+            }
+            catch (Exception ex) { Guard.Failed(Name, ex); }
+        }
+
+        // Over water, checked once a second per flight (a linecast).
+        private static readonly System.Collections.Generic.Dictionary<Flight, (float at, bool wet)> wetAt = new System.Collections.Generic.Dictionary<Flight, (float, bool)>();
+        private static bool OverWater(Aircraft aircraft, Flight flight)
+        {
+            float now = Time.timeSinceLevelLoad;
+            if (wetAt.TryGetValue(flight, out var seen) && now - seen.at < 1f) return seen.wet;
+            bool wet = TaskForces.Navigable(aircraft.GlobalPosition(), 1f);
+            if (wetAt.Count > 200) wetAt.Clear();
+            wetAt[flight] = (now, wet);
+            return wet;
+        }
+
+        // The rotor's speed against its governed speed, for the trace.
+        private static string Rotor(Aircraft aircraft)
+        {
+            if (aircraft?.engines == null) return "?";
+            float sum = 0f; int n = 0;
+            foreach (IEngine engine in aircraft.engines)
+                if (engine is RotorShaft shaft) { sum += shaft.GetRPMRatio(); n++; }
+            return n > 0 ? (sum / n * 100f).ToString("0") + "%" : "?";
         }
 
         // How the game's transport state flies our cargo flights: our own
@@ -231,10 +284,27 @@ namespace NOrders
                 " · alt " + aircraft.radarAlt.ToString("0") + " m · spd " + aircraft.speed.ToString("0") + " · sink " + sink.ToString("0") +
                 " · collective " + (inputs != null ? (inputs.throttle * 100f).ToString("0") + "%" : "?") +
                 " · pusher " + (inputs != null ? inputs.customAxis1.ToString("0.00") : "?") +
+                " · rotor " + Rotor(aircraft) +
+                " · top " + (aircraft.GetAircraftParameters()?.maxSpeed.ToString("0") ?? "?") +
                 " · LZ " + (FastMath.Distance(aircraft.GlobalPosition(), flight.CargoPoint) / 1000f).ToString("0.0") + " km" +
                 (overWater ? " · over water" : "") + " · flight assist " + (aircraft.flightAssist ? "on" : "off"));
         }
 
         private const string Name = "Cargo missions";
+    }
+
+    // The transit height the transport state asks for, raised over open
+    // water for our cargo flights (see CargoTargetPatch). The state calls
+    // AutoAim from inside its FixedUpdateState, between our prefix and postfix.
+    [HarmonyPatch(typeof(AutopilotHelo), nameof(AutopilotHelo.AutoAim),
+        new[] { typeof(GlobalPosition), typeof(float), typeof(Vector3), typeof(Vector3), typeof(bool) })]
+    internal static class CargoSeaHeightPatch
+    {
+        private static void Prefix(AutopilotHelo __instance, ref float altitudeHold)
+        {
+            if (CargoTargetPatch.liftFor == null || __instance.aircraft != CargoTargetPatch.liftFor) return;
+            // 200 m is the parachute pass; leave that, and anything already higher.
+            if (altitudeHold < CargoTargetPatch.liftFloor) altitudeHold = CargoTargetPatch.liftFloor;
+        }
     }
 }
