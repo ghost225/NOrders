@@ -33,8 +33,8 @@ namespace NOrders
             AccessTools.FieldRefAccess<AIPilotCombatModes, float>("targetHeight");
         private static readonly AccessTools.FieldRef<AIPilotCombatModes, List<Missile>> AlertsOf =
             AccessTools.FieldRefAccess<AIPilotCombatModes, List<Missile>>("missileAlerts");
-        private static readonly Dictionary<AIPilotCombatModes, (Missile shot, float floor)> floors =
-            new Dictionary<AIPilotCombatModes, (Missile, float)>();
+        private const float StepDown = 300f;
+        private static readonly HashSet<Missile> noted = new HashSet<Missile>();
 
         private static void Postfix(AIPilotCombatModes __instance, ref GlobalPosition evadeDestination)
         {
@@ -45,26 +45,28 @@ namespace NOrders
                 Flight flight = FlightOrders.Of(aircraft);
                 if (flight == null || Host.IsFlownByPlayer(flight)) return;
 
-                // Not to the deck. The game's radar evasion terrain-follows
-                // down to 10 m at full power from wherever the shot found it,
-                // and loaded aircraft went into the sea doing it. The descent
-                // stops at 70% of the height the shot found it at, never under
-                // the evasion floor -- set once per shot, as our own beam did.
-                // The notch, the chaff, the ECM and the last-second pull are
-                // the game's.
+                // Down to the deck, but walked there. The game's radar
+                // evasion terrain-follows to 10 m at full power from wherever
+                // the shot found it; aimed at 10 m from kilometres up, loaded
+                // aircraft plunged and could not pull out over the sea. The
+                // height it aims for is never more than StepDown under where it
+                // is now, so it descends steadily to 10 m over the ground (the
+                // game's own floor) instead of diving at it. The notch, the
+                // chaff, the ECM and the last-second pull are the game's; the
+                // ground guard still catches a hard sink near the ground.
                 List<Missile> alerts = AlertsOf(__instance);
-                Missile shot = alerts != null && alerts.Count > 0 ? alerts[0] : null;
-                if (shot != null)
+                if (alerts != null && alerts.Count > 0)
                 {
-                    if (!floors.TryGetValue(__instance, out var held) || held.shot != shot)
-                    {
-                        if (floors.Count > 200) floors.Clear();
-                        held = (shot, Mathf.Max(aircraft.radarAlt * 0.7f, Tuning.RadarEvasionFloor));
-                        floors[__instance] = held;
-                        Tracing.Flight("[flight] " + flight.Name + " · evading a radar shot under the combat pilot · down to no lower than " + held.floor.ToString("0") + " m");
-                    }
                     ref float height = ref TargetHeightOf(__instance);
-                    if (height < held.floor) height = held.floor;
+                    float walked = aircraft.radarAlt - StepDown;
+                    if (height < walked) height = walked;
+                    Missile shot = alerts[0];
+                    if (noted.Add(shot))
+                    {
+                        if (noted.Count > 200) noted.Clear();
+                        Tracing.Flight("[flight] " + flight.Name + " · evading a radar shot under the combat pilot from " +
+                            aircraft.radarAlt.ToString("0") + " m · down to 10 m over the ground, " + StepDown.ToString("0") + " m at a time");
+                    }
                 }
 
                 if (flight.Home == null) return;
