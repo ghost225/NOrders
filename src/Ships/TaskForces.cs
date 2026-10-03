@@ -362,18 +362,18 @@ namespace NOrders
             {
                 case Formation.Column:
                     for (int i = 0; i < force.Escorts.Count; i++) slots.Add(new Slot(180f, gap * 1.4f * (i + 1)));
-                    Assign(force, force.Escorts, slots);
+                    Assign(force, force.Escorts, ClearOfLanes(force, slots));
                     return;
                 case Formation.Abreast:
                     for (int i = 0; i < force.Escorts.Count; i++)
                         slots.Add(new Slot(i % 2 == 0 ? 90f : 270f, gap * 1.4f * (i / 2 + 1)));
-                    Assign(force, force.Escorts, slots);
+                    Assign(force, force.Escorts, ClearOfLanes(force, slots));
                     return;
                 case Formation.Box:
                     float[] corners = { 45f, 315f, 135f, 225f };
                     for (int i = 0; i < force.Escorts.Count; i++)
                         slots.Add(new Slot(corners[i % 4], gap * 1.8f * (i / 4 + 1)));
-                    Assign(force, force.Escorts, slots);
+                    Assign(force, force.Escorts, ClearOfLanes(force, slots));
                     return;
             }
 
@@ -381,12 +381,12 @@ namespace NOrders
             // ahead -- each role's stations shared out within that role.
             for (int i = 0; i < main.Count; i++)
                 slots.Add(new Slot(180f + (i % 2 == 0 ? 1 : -1) * 15f * ((i + 1) / 2), gap * 1.6f * (i / 2 + 1)));
-            Assign(force, main, slots);
+            Assign(force, main, ClearOfLanes(force, slots));
             slots = new List<Slot>();
             float[] ringBearings = { 45f, 315f, 135f, 225f, 90f, 270f, 0f, 180f };
             for (int i = 0; i < ring.Count; i++)
                 slots.Add(new Slot(ringBearings[i % ringBearings.Length], gap * 2.4f * (1f + 0.5f * (i / ringBearings.Length))));
-            Assign(force, ring, slots);
+            Assign(force, ring, ClearOfLanes(force, slots));
             slots = new List<Slot>();
             float arc = Mathf.Max(5f * (force.Guide != null ? force.Guide.maxRadius : 60f), 1500f) * force.Spacing;
             for (int i = 0; i < screen.Count; i++)
@@ -395,7 +395,7 @@ namespace NOrders
                 float offset = (slot - 2) * 17.5f + (rank % 2 == 1 ? 8.75f : 0f);
                 slots.Add(new Slot(offset, arc + 600f * rank, threatArc: true));
             }
-            Assign(force, screen, slots);
+            Assign(force, screen, ClearOfLanes(force, slots));
             Report(force, main, ring, screen);
         }
 
@@ -414,6 +414,70 @@ namespace NOrders
                     .Append(escort.Range.ToString("0")).Append(" m");
             }
             Tracing.Nav(line.ToString());
+        }
+
+        // ---- the launch lane ----------------------------------------------------------------
+        // A carrier's escorts keep out of the path its aircraft take off along:
+        // each takeoff runway's line off the bow, twenty degrees either side,
+        // out to six kilometres. The screen put its pickets dead ahead at a
+        // kilometre and a half, and aircraft climbing off the deck flew into
+        // the ships jammed in front of it.
+        private const float LaneHalf = 20f, LaneLength = 6000f;
+
+        // Lane bearings relative to the guide's heading; empty for a ship with no runway.
+        private static List<float> Lanes(Ship guide)
+        {
+            var lanes = new List<float>();
+            if (guide == null) return lanes;
+            Airbase deck = guide.GetComponentInChildren<Airbase>(true);
+            if (deck?.runways == null) return lanes;
+            Vector3 fwd = guide.transform.forward; fwd.y = 0f;
+            foreach (Airbase.Runway runway in deck.runways)
+            {
+                if (runway?.Start == null || runway.End == null || !runway.Takeoff) continue;
+                Vector3 dir = runway.End.position - runway.Start.position; dir.y = 0f;
+                if (dir.sqrMagnitude < 1f) continue;
+                float b = Vector3.SignedAngle(fwd, dir, Vector3.up);
+                if (!lanes.Exists(l => Mathf.Abs(Mathf.DeltaAngle(l, b)) < 5f)) lanes.Add(b);
+            }
+            return lanes;
+        }
+
+        private static List<Slot> ClearOfLanes(TaskForce force, List<Slot> slots)
+        {
+            List<float> lanes = Lanes(force.Guide);
+            if (lanes.Count == 0 || slots.Count == 0) return slots;
+            Vector3 course = force.LastSmooth >= 0f ? force.Course : new Vector3(force.Guide.transform.forward.x, 0f, force.Guide.transform.forward.z).normalized;
+            float courseRef = Mathf.Atan2(course.x, course.z) * Mathf.Rad2Deg;
+            var result = new List<Slot>();
+            foreach (Slot slot in slots)
+            {
+                if (slot.Range >= LaneLength) { result.Add(slot); continue; }
+                float reference = slot.ThreatArc && force.PicketsFaceThreat ? ThreatBearing(force) : force.FixedNorth ? 0f : courseRef;
+                float bearing = slot.Bearing;
+                // Out of every lane, to the nearer side; then clear of the
+                // stations already placed at a like range, stepping outward.
+                for (int pass = 0; pass < 12; pass++)
+                {
+                    bool moved = false;
+                    foreach (float lane in lanes)
+                    {
+                        float delta = Mathf.DeltaAngle(courseRef + lane, reference + bearing);
+                        if (Mathf.Abs(delta) >= LaneHalf) continue;
+                        bearing += (delta >= 0f ? 1f : -1f) * (LaneHalf + 5f) - delta;
+                        moved = true;
+                    }
+                    foreach (Slot placed in result)
+                    {
+                        if (Mathf.Abs(placed.Range - slot.Range) > 400f || Mathf.Abs(Mathf.DeltaAngle(placed.Bearing, bearing)) >= 12f) continue;
+                        bearing += Mathf.DeltaAngle(placed.Bearing, bearing) >= 0f ? 12f : -12f;
+                        moved = true;
+                    }
+                    if (!moved) break;
+                }
+                result.Add(new Slot(Mathf.Repeat(bearing, 360f), slot.Range, slot.ThreatArc));
+            }
+            return result;
         }
 
         private readonly struct Slot
