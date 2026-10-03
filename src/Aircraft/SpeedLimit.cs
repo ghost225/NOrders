@@ -51,7 +51,17 @@ namespace NOrders
                 // Auto-hover acts beneath any pilot state; the combat pilot never
                 // switches it off either (see NavalPilotState.Steer).
                 if (aircraft.radarAlt > 5f && aircraft.IsAutoHoverEnabled()) aircraft.GetControlsFilter().SetAutoHover(false);
-                if (SpeedLimit.Apply(aircraft, aircraft.GetInputs()) && SpeedLimit.Over(aircraft) >= 1f && Time.timeSinceLevelLoad >= noteAt)
+                // Throttle at exactly zero is the airbrake. The combat pilot
+                // asks for it in a gun run on a much slower target (a
+                // helicopter) and when evading a heat-seeker; slow or low,
+                // with airbrakes out, a jet spins or mushes in. Idle instead,
+                // there; at speed and height it may still brake.
+                ControlInputs inputs = aircraft.GetInputs();
+                AircraftParameters p = aircraft.GetAircraftParameters();
+                if (inputs != null && inputs.throttle <= 0f && aircraft.radarAlt > 5f &&
+                    (aircraft.radarAlt < 300f || (p != null && p.cornerSpeed > 0f && aircraft.speed < p.cornerSpeed * 1.2f)))
+                    inputs.throttle = 0.02f;
+                if (SpeedLimit.Apply(aircraft, inputs) && SpeedLimit.Over(aircraft) >= 1f && Time.timeSinceLevelLoad >= noteAt)
                 {
                     noteAt = Time.timeSinceLevelLoad + 15f;
                     Tracing.Flight("[flight] " + flight.Name + " · overspeed in combat · " + aircraft.speed.ToString("0") + " m/s, power off");
