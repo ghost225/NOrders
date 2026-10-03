@@ -100,6 +100,10 @@ namespace NOrders
         public float ThreatRange = float.PositiveInfinity;
         public Missile ThreatMissile;       // the nearest shot at us
         public GlobalPosition? HomingVia;   // on the way home by a dogleg; the landing follows once it is reached
+        internal bool HomingGated;          // the HomingVia is a landing gate (LandingApproach), not a dogleg round missiles
+        internal GlobalPosition? CargoGate; // a delivery onto a field waits until the aircraft reaches this gate
+        internal GlobalPosition CargoGateWhere;
+        internal bool CargoGateAirdrop;
         public string LastThreat;           // the last shot at us, described; for the loss report
         public float LastThreatAt;
         public float LastBurstAt;           // IR defence: when the last string of flares ended
@@ -676,12 +680,31 @@ namespace NOrders
                 // leg), or the flight retasked meanwhile: the landing, or nothing.
                 if (flight.HomingVia.HasValue)
                 {
-                    if (flight.Mode != FlightMode.Route && flight.Mode != FlightMode.Orbit) flight.HomingVia = null;
-                    else if (flight.Mode == FlightMode.Orbit || (flight.Aircraft != null &&
+                    if (flight.Mode != FlightMode.Route && flight.Mode != FlightMode.Orbit) { flight.HomingVia = null; flight.HomingGated = false; }
+                    // Reached on the last leg only: a landing gate's route has two
+                    // legs, and passing near the inner gate on the way out to the
+                    // outer one is not arriving on the line.
+                    else if (flight.Mode == FlightMode.Orbit || (flight.Aircraft != null && flight.Route.Count <= 1 &&
                              FastMath.InRange(flight.Aircraft.GlobalPosition(), flight.HomingVia.Value, 2500f)))
                     {
-                        flight.HomingVia = null;
-                        flight.Mode = FlightMode.ReturnToBase;
+                        bool gated = flight.HomingGated;
+                        flight.HomingVia = null; flight.HomingGated = false;
+                        // A dogleg round the missiles done: the landing may still
+                        // need its gates before it is handed over.
+                        if (gated || !LandingApproach.GateHome(flight)) flight.Mode = FlightMode.ReturnToBase;
+                    }
+                }
+                // A delivery onto a field, its gate reached: the delivery itself.
+                if (flight.CargoGate.HasValue)
+                {
+                    if (flight.Mode != FlightMode.Route && flight.Mode != FlightMode.Orbit) flight.CargoGate = null;
+                    else if (flight.Mode == FlightMode.Orbit || (flight.Aircraft != null && flight.Route.Count <= 1 &&
+                             FastMath.InRange(flight.Aircraft.GlobalPosition(), flight.CargoGate.Value, 2500f)))
+                    {
+                        flight.CargoGate = null;
+                        gatePassed = true;
+                        try { Deliver(flight, flight.CargoGateWhere, flight.CargoGateAirdrop); }
+                        finally { gatePassed = false; }
                     }
                 }
                 // The burner for the native pilot too: it sets full throttle in
@@ -1428,6 +1451,8 @@ namespace NOrders
 
         // The native transport state flies the delivery; we only tell it where.
         // An aeroplane can only airdrop, whatever was asked for.
+        private static bool gatePassed;      // set while a gated delivery is re-ordered from its gate
+
         public static void Deliver(Flight flight, GlobalPosition where, bool airdrop)
         {
             if (flight == null) return;
@@ -1437,6 +1462,10 @@ namespace NOrders
                 return;
             }
             if (FixedWingDrops.CanAirdrop(flight.Aircraft)) airdrop = true;
+            // Onto a field with buildings across the straight-in approach: out to
+            // the gates first; the delivery is ordered again from the inner one.
+            flight.CargoGate = null;
+            if (!gatePassed && !deliveringAlong && LandingApproach.GateCargo(flight, where, airdrop)) return;
             // A drop along a line keeps its line; any other delivery has none.
             if (!deliveringAlong) { flight.HasDropLine = false; flight.LeadInPending = false; }
             LeaveJamStation(flight);
@@ -2012,12 +2041,16 @@ namespace NOrders
                 if (via.HasValue)
                 {
                     flight.HomingVia = via;
+                    flight.HomingGated = false;
                     SetRoute(flight, via.Value, false);
                     Host.LogInfo("[flight] " + flight.Name + " · home round the missiles via a dogleg");
                     return;
                 }
+                // A helicopter or tiltwing: in along a line clear of the field's buildings.
+                if (LandingApproach.GateHome(flight)) return;
             }
             flight.HomingVia = null;
+            flight.HomingGated = false;
             flight.Mode = FlightMode.ReturnToBase;
         }
 

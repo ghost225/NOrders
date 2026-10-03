@@ -1086,7 +1086,26 @@ namespace NOrders
 
             destination = aim;
             autopilot.AutoAim(aim, commanded, nose, velocity, followTerrain: true);
+
+            // Sink guard. A plain or compound helicopter sinking hard near the
+            // ground gets collective, whatever the autopilot asked for: six
+            // loaded Ibises fell from 700 m into the sea together with nothing
+            // hit, collective at 0-12% at impact. Tiltwings fly on their wings
+            // at speed and are left to their own autopilot.
+            if (RotaryKind(aircraft) != Rotary.Tiltwing && aircraft.rb != null)
+            {
+                float sink = -aircraft.rb.velocity.y;
+                if (sink > 12f && aircraft.radarAlt < 250f + sink * 4f)
+                {
+                    float wantCollective = Mathf.Lerp(0.7f, 1f, Mathf.InverseLerp(12f, 35f, sink));
+                    if (controlInputs.throttle < wantCollective) controlInputs.throttle = wantCollective;
+                    heloHold = Mathf.Max(heloHold, aircraft.radarAlt + 50f);
+                    if (Time.timeSinceLevelLoad - sinkSaidAt > 15f) { sinkSaidAt = Time.timeSinceLevelLoad; Tracing.Flight("[flight] " + flight.Name + " · sinking " + sink.ToString("0") + " m/s at " + aircraft.radarAlt.ToString("0") + " m, collective up"); }
+                }
+            }
         }
+
+        private float sinkSaidAt = -100f;
 
         // Only these autopilots actually implement an AutoAim; anything else
         // would be flown by a method with an empty body.
