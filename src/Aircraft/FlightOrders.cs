@@ -470,9 +470,13 @@ namespace NOrders
             });
         }
 
-        // A new flight's height: helicopters have their own default, lower.
+        // A new flight's height and task area: helicopters have their own
+        // defaults, lower and smaller.
         internal static float DefaultAltitudeFor(Aircraft aircraft) =>
             aircraft != null && aircraft.autopilot is AutopilotHelo ? Tuning.DefaultHelicopterAltitude : Tuning.DefaultAltitude;
+
+        internal static float DefaultRadiusFor(Aircraft aircraft) =>
+            aircraft != null && aircraft.autopilot is AutopilotHelo ? Tuning.DefaultHelicopterAreaRadius : Tuning.DefaultAreaRadius;
 
         // Callsigns already spoken for: flying, or on a deck waiting to launch.
         internal static IEnumerable<string> LabelsInUse()
@@ -530,7 +534,7 @@ namespace NOrders
                     Mode = FlightMode.Orbit,
                     OrbitCentre = Airfields.PositionOf(home),
                     Altitude = DefaultAltitudeFor(aircraft),
-                    OrbitRadius = Tuning.DefaultAreaRadius
+                    OrbitRadius = DefaultRadiusFor(aircraft)
                 };
                 flights.Add(flight);
                 CreditKills(aircraft);
@@ -561,7 +565,7 @@ namespace NOrders
                 Mode = FlightMode.Orbit,
                 OrbitCentre = home != null ? Airfields.PositionOf(home) : aircraft.GlobalPosition(),
                 Altitude = DefaultAltitudeFor(aircraft),
-                OrbitRadius = Tuning.DefaultAreaRadius
+                OrbitRadius = DefaultRadiusFor(aircraft)
             };
             flights.Add(flight);
             CreditKills(aircraft);
@@ -747,7 +751,7 @@ namespace NOrders
                     Mode = FlightMode.Orbit,
                     OrbitCentre = Airfields.PositionOf(request.Field),
                     Altitude = DefaultAltitudeFor(found),
-                    OrbitRadius = Tuning.DefaultAreaRadius
+                    OrbitRadius = DefaultRadiusFor(found)
                 };
                 flights.Add(flight);
                 CreditKills(found);
@@ -1587,7 +1591,7 @@ namespace NOrders
             else
             {
                 flight.Mode = flight.PreviousMode == FlightMode.Cargo ? FlightMode.Orbit : flight.PreviousMode;
-                if (flight.Mode == FlightMode.Orbit && flight.OrbitRadius <= 0f) flight.OrbitRadius = Tuning.DefaultAreaRadius;
+                if (flight.Mode == FlightMode.Orbit && flight.OrbitRadius <= 0f) flight.OrbitRadius = DefaultRadiusFor(flight.Aircraft);
             }
             flight.CargoAtOrder = 0;
             flight.Adopted = false;
