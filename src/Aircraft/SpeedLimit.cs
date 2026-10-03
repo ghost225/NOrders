@@ -37,7 +37,7 @@ namespace NOrders
     internal static class NativeSpeedLimitPatch
     {
         private const string Name = "Combat speed limit";
-        private static float noteAt;
+        private static float noteAt, groundNoteAt;
 
         private static void Postfix(Pilot pilot)
         {
@@ -52,6 +52,31 @@ namespace NOrders
                 {
                     noteAt = Time.timeSinceLevelLoad + 15f;
                     Tracing.Flight("[flight] " + flight.Name + " · overspeed in combat · " + aircraft.speed.ToString("0") + " m/s, power off");
+                }
+                // Ground ahead: the combat pilot dives on a low target and does
+                // not always come out -- a Vortex went into the ground at
+                // 449 m/s while "engaging". Under four seconds from impact at the
+                // present sink (or the terrain warning already sounding), our
+                // autopilot call replaces its inputs for the frame: wings toward
+                // level, nose up the way it is going, until it is climbing.
+                // (Sink rate and height only: the game's terrain warning is an
+                // exclusion-zone check, not a ground one.)
+                if (aircraft.rb != null)
+                {
+                    float sink = -aircraft.rb.velocity.y;
+                    if (sink > 15f && aircraft.radarAlt < sink * 4f + 100f)
+                    {
+                        Vector3 ahead = aircraft.rb.velocity; ahead.y = 0f;
+                        if (ahead.sqrMagnitude < 1f) ahead = aircraft.transform.forward; ahead.y = 0f;
+                        GlobalPosition up = aircraft.GlobalPosition() + ahead.normalized * 3000f + Vector3.up * 1200f;
+                        aircraft.autopilot.AutoAim(up, aimVelocity: true, ignoreCollisions: false, runwayAlign: false,
+                            effort: 1f, bankAllowed: 30f, followTerrain: true, altitudeHold: 300f, targetVelocity: Vector3.zero);
+                        if (Time.timeSinceLevelLoad >= groundNoteAt)
+                        {
+                            groundNoteAt = Time.timeSinceLevelLoad + 10f;
+                            Tracing.Flight("[flight] " + flight.Name + " · pulled out under the combat pilot · sinking " + sink.ToString("0") + " m/s at " + aircraft.radarAlt.ToString("0") + " m");
+                        }
+                    }
                 }
             }
             catch (Exception ex) { Guard.Failed(Name, ex); }

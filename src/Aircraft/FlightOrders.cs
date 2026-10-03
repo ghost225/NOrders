@@ -2024,6 +2024,16 @@ namespace NOrders
             // heat-seeker is ours: idle, beam, flares (see IrDefence).
             if (flight.Threat == FlightThreat.Missile) return !flight.ThreatIsInfrared && !Tuning.OwnRadarEvasion;
             if (flight.Roe == FlightRoe.Hold) return false;
+            // Not to start a fight on the way home, nor while too slow to
+            // fight: a Vortex returning at 98 m/s and 976 m was handed to the
+            // combat pilot for a hostile and went in. Missiles still go by the
+            // rule above.
+            if (flight.Mode == FlightMode.ReturnToBase) return false;
+            if (flight.Aircraft != null && flight.Aircraft.autopilot is AutopilotPlane)
+            {
+                AircraftParameters p = flight.Aircraft.GetAircraftParameters();
+                if (p != null && p.cornerSpeed > 0f && flight.Aircraft.speed < p.cornerSpeed * 0.8f && !flight.Interrupted) return false;
+            }
             return flight.Threat == FlightThreat.Hostile;
         }
 
