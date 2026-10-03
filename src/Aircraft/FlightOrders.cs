@@ -470,6 +470,10 @@ namespace NOrders
             });
         }
 
+        // A new flight's height: helicopters have their own default, lower.
+        internal static float DefaultAltitudeFor(Aircraft aircraft) =>
+            aircraft != null && aircraft.autopilot is AutopilotHelo ? Tuning.DefaultHelicopterAltitude : Tuning.DefaultAltitude;
+
         // Callsigns already spoken for: flying, or on a deck waiting to launch.
         internal static IEnumerable<string> LabelsInUse()
         {
@@ -525,7 +529,7 @@ namespace NOrders
                     Wing = wing,
                     Mode = FlightMode.Orbit,
                     OrbitCentre = Airfields.PositionOf(home),
-                    Altitude = Tuning.DefaultAltitude,
+                    Altitude = DefaultAltitudeFor(aircraft),
                     OrbitRadius = Tuning.DefaultAreaRadius
                 };
                 flights.Add(flight);
@@ -556,7 +560,7 @@ namespace NOrders
                 Wing = wing,
                 Mode = FlightMode.Orbit,
                 OrbitCentre = home != null ? Airfields.PositionOf(home) : aircraft.GlobalPosition(),
-                Altitude = Tuning.DefaultAltitude,
+                Altitude = DefaultAltitudeFor(aircraft),
                 OrbitRadius = Tuning.DefaultAreaRadius
             };
             flights.Add(flight);
@@ -742,7 +746,7 @@ namespace NOrders
                     Wing = request.Wing,
                     Mode = FlightMode.Orbit,
                     OrbitCentre = Airfields.PositionOf(request.Field),
-                    Altitude = Tuning.DefaultAltitude,
+                    Altitude = DefaultAltitudeFor(found),
                     OrbitRadius = Tuning.DefaultAreaRadius
                 };
                 flights.Add(flight);

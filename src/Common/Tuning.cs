@@ -8,6 +8,7 @@ namespace NOrders
         // Flights
         public static float DefaultFuel = 1f;
         public static float DefaultAltitude = 600f;
+        public static float DefaultHelicopterAltitude = 600f;
         public static float DefaultAreaRadius = 3000f;
         public static float MinimumClearance = 55f;
         public static float ThreatSettleSeconds = 8f;
