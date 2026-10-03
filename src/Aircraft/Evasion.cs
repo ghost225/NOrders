@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
 
@@ -28,6 +29,13 @@ namespace NOrders
         private static readonly AccessTools.FieldRef<AIPilotCombatModes, float> ImpactTimeOf =
             AccessTools.FieldRefAccess<AIPilotCombatModes, float>("missileImpactTime");
 
+        private static readonly AccessTools.FieldRef<AIPilotCombatModes, float> TargetHeightOf =
+            AccessTools.FieldRefAccess<AIPilotCombatModes, float>("targetHeight");
+        private static readonly AccessTools.FieldRef<AIPilotCombatModes, List<Missile>> AlertsOf =
+            AccessTools.FieldRefAccess<AIPilotCombatModes, List<Missile>>("missileAlerts");
+        private static readonly Dictionary<AIPilotCombatModes, (Missile shot, float floor)> floors =
+            new Dictionary<AIPilotCombatModes, (Missile, float)>();
+
         private static void Postfix(AIPilotCombatModes __instance, ref GlobalPosition evadeDestination)
         {
             if (!Guard.Ok(Name)) return;
@@ -35,7 +43,31 @@ namespace NOrders
             {
                 Aircraft aircraft = AircraftOf(__instance);
                 Flight flight = FlightOrders.Of(aircraft);
-                if (flight == null || flight.Home == null || Host.IsFlownByPlayer(flight)) return;
+                if (flight == null || Host.IsFlownByPlayer(flight)) return;
+
+                // Not to the deck. The game's radar evasion terrain-follows
+                // down to 10 m at full power from wherever the shot found it,
+                // and loaded aircraft went into the sea doing it. The descent
+                // stops at 70% of the height the shot found it at, never under
+                // the evasion floor -- set once per shot, as our own beam did.
+                // The notch, the chaff, the ECM and the last-second pull are
+                // the game's.
+                List<Missile> alerts = AlertsOf(__instance);
+                Missile shot = alerts != null && alerts.Count > 0 ? alerts[0] : null;
+                if (shot != null)
+                {
+                    if (!floors.TryGetValue(__instance, out var held) || held.shot != shot)
+                    {
+                        if (floors.Count > 200) floors.Clear();
+                        held = (shot, Mathf.Max(aircraft.radarAlt * 0.7f, Tuning.RadarEvasionFloor));
+                        floors[__instance] = held;
+                        Tracing.Flight("[flight] " + flight.Name + " · evading a radar shot under the combat pilot · down to no lower than " + held.floor.ToString("0") + " m");
+                    }
+                    ref float height = ref TargetHeightOf(__instance);
+                    if (height < held.floor) height = held.floor;
+                }
+
+                if (flight.Home == null) return;
 
                 Vector3 friendly = flight.HomePosition - aircraft.GlobalPosition();
                 friendly.y = 0f;

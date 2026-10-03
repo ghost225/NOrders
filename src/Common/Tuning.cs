@@ -52,7 +52,7 @@ namespace NOrders
         // Radar shots flown off by our own state (beam, chaff, a gentle descent
         // at full power) instead of the native pilot's dive to the deck, which
         // put heavy airframes into the sea and handed them back stalled.
-        public static bool OwnRadarEvasion = true;
+        public static bool OwnRadarEvasion = false;
         public static bool StandOnWhenCovered = true;
         public static float RadarEvasionFloor = 250f;   // metres above ground the descent stops at
         public static bool PreFlare = true;
