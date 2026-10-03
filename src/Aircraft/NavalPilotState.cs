@@ -88,6 +88,15 @@ namespace NOrders
             float result = CruiseFor();
             if (corner > 0f && aircraft.speed < corner * 1.3f)
                 result = Mathf.Lerp(1f, result, (aircraft.speed - corner) / (corner * 0.3f));
+            // And no faster than cruise wants: from 65% of top speed the power
+            // eases off, to 30% by 75%. Cruise power alone carried a Medusa
+            // (top 300 m/s) to 250 in a station orbit, where the air load of an
+            // ordinary 2.5 g turn tore its tail and a wing off -- two pickets,
+            // one each side, in the same minute. Speed before economy below
+            // corner; economy, and the airframe, above.
+            float top = parameters != null ? parameters.maxSpeed : 0f;
+            if (top > 0f && aircraft.speed > top * 0.65f)
+                result = Mathf.Min(result, Mathf.Lerp(result, 0.3f, Mathf.InverseLerp(top * 0.65f, top * 0.75f, aircraft.speed)));
             return result;
         }
 
