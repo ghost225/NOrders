@@ -860,7 +860,7 @@ namespace NOrders
                         flight.Cranking = false;
                         flight.EgressUntil = Time.timeSinceLevelLoad + Crank.ColdSeconds;
                         PlanEgress(flight);
-                        Tracing.Flight("[flight] " + flight.Name + " · " + (guided == 0 ? "missiles on their own" : "crank timed out") + ", going cold");
+                        Tracing.Flight("[flight] " + flight.Name + " · " + (guided == 0 ? "nothing left to guide (missiles active, gone, or no track)" : "crank timed out") + ", going cold");
                     }
                 }
                 else if (flight.Mode == FlightMode.Egress)

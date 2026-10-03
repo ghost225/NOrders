@@ -25,8 +25,8 @@ namespace NOrders
 
         private static readonly FieldInfo RadarCone = AccessTools.Field(typeof(Radar), "radarCone");
 
-        // This aircraft's missiles still flying on its radar, and what they
-        // are after.
+        // This aircraft's missiles still flying on its radar, at targets our
+        // side still holds a track on, and what they are after.
         internal static int Supported(Aircraft aircraft, List<Unit> targets)
         {
             targets?.Clear();
@@ -40,6 +40,11 @@ namespace NOrders
                 bool needs = seeker == "SARH" || (seeker == "ARH" && missile.seekerMode != Missile.SeekerMode.activeLock);
                 if (!needs) continue;
                 if (!UnitRegistry.TryGetUnit(missile.targetID, out Unit target) || target == null || target.disabled) continue;
+                // Only while there is still a track to guide it on -- the test
+                // the missile's own datalink makes. Contact lost, nothing the
+                // crank does helps it, and the shooter may as well go cold.
+                FactionHQ hq = aircraft.NetworkHQ;
+                if (hq == null || !hq.IsTargetPositionAccurate(target, 2000f)) continue;
                 count++;
                 if (targets != null && !targets.Contains(target)) targets.Add(target);
             }
