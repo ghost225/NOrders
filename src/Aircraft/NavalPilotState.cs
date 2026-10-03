@@ -236,12 +236,30 @@ namespace NOrders
                     // gentle climb is the only way out.
                     // ... and never below 300 m over the ground: a Vortex fed
                     // "600 m lower" every tick from 2,300 m followed it in.
-                    if (slow && !low) flight.Altitude = Mathf.Max(aircraft.radarAlt - 600f, LowBar + 150f);
+                    if (slow && !low)
+                    {
+                        flight.Altitude = Mathf.Max(aircraft.radarAlt - 600f, LowBar + 150f);
+                        // Falling already, it follows its own flight path down
+                        // until the speed is back: the autopilot steers the
+                        // flight path, and a Vortex at 60 m/s sinking steeply,
+                        // told to fly a seven-degree path, was pulled up into
+                        // the stall it was in, at full power. No terrain
+                        // following meanwhile (that sets its own climb), and
+                        // the 300 m floor still holds.
+                        Vector3 v = aircraft.rb != null ? aircraft.rb.velocity : Vector3.zero;
+                        float path = v.sqrMagnitude > 1f ? Mathf.Asin(Mathf.Clamp(v.y / v.magnitude, -1f, 1f)) * Mathf.Rad2Deg : 0f;
+                        if (path < -7f)
+                        {
+                            unloadTo = -path + 2f;
+                            flight.Altitude = Mathf.Max(aircraft.radarAlt + 5000f * Mathf.Tan((path - 2f) * Mathf.Deg2Rad), LowBar + 150f);
+                        }
+                    }
                     else if (slow) flight.Altitude = aircraft.radarAlt < 40f ? aircraft.radarAlt + 80f : aircraft.radarAlt;
                     else flight.Altitude = Mathf.Clamp(aircraft.radarAlt + 300f, LowBar + 150f, Mathf.Max(ordered, LowBar + 150f));
                     flight.Doing("RECOVERING ENERGY");
                     if (recoveringSince < 0f) { recoveringSince = Time.timeSinceLevelLoad; Tracing.Flight("[flight] " + flight.Name + " · recovering energy · " + aircraft.speed.ToString("0") + " m/s (bar " + bar.ToString("0") + ") at " + aircraft.radarAlt.ToString("0") + " m"); }
-                    Steer(aircraft.GlobalPosition() + ahead.normalized * 5000f, default, 30f);
+                    try { Steer(aircraft.GlobalPosition() + ahead.normalized * 5000f, default, 30f); }
+                    finally { unloadTo = 0f; }
                     flight.Altitude = ordered;
                     return;
                 }
@@ -374,6 +392,9 @@ namespace NOrders
         // nearly dead ahead, which is the cruise case the autopilot handles well.
         private const float LookAhead = 6000f;
         private const float MinSteerDistance = 2500f;
+        // Set by the energy recovery while a stalled aircraft follows its own
+        // flight path down: the descent it may be steered at, in degrees.
+        private float unloadTo;
         private const float MaxSteerDescent = 10f;
         private const float MaxSteerClimb = 20f;
 
@@ -909,7 +930,7 @@ namespace NOrders
                 // not over the ground at the point. Two Ifrits on a 600 m
                 // run-in held the height of the target's ground while the land
                 // rose under them -- radar altitude 354, 231, 46 -- and hit it.
-                bool followTerrain = aboveGround < 1500f;
+                bool followTerrain = aboveGround < 1500f && unloadTo <= 0f;
                 GlobalPosition from = aircraft.GlobalPosition();
                 // Never a steering point close in: the autopilot pulls up hard
                 // -- two kilometres of up on a one-kilometre vector, fifty
@@ -971,7 +992,7 @@ namespace NOrders
                         // and could not pull out; nothing was shot at them.
                         float top = parameters != null ? parameters.maxSpeed : 0f;
                         float fast = top > 0f ? Mathf.InverseLerp(0.55f * top, 0.85f * top, aircraft.speed) : 0f;
-                        float maxDown = Mathf.Lerp(MaxSteerDescent, 3f, fast);
+                        float maxDown = Mathf.Max(Mathf.Lerp(MaxSteerDescent, 3f, fast), unloadTo);
                         float low = Mathf.Max(from.y - run * Mathf.Tan(maxDown * Mathf.Deg2Rad), groundFloor);
                         float high = Mathf.Max(from.y + run * Mathf.Tan(MaxSteerClimb * Mathf.Deg2Rad), groundFloor);
                         float y = Mathf.Clamp(point.y, low, high);
