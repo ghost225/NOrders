@@ -208,8 +208,31 @@ namespace NOrders
                 Flight flight = FlightOrders.Of(aircraft);
                 if (flight == null || flight.Mode != FlightMode.Cargo) return;
                 CargoMissions.Apply(__instance, flight);
+                Trace(aircraft, flight, __instance);
             }
             catch (Exception ex) { Guard.Failed(Name, ex); }
+        }
+
+        // How the game's transport state flies our cargo flights: our own
+        // trace stops when it takes over, and Ibises went into the sea under it
+        // far from their landing zones. Every four seconds per flight.
+        private static readonly System.Collections.Generic.Dictionary<Flight, float> tracedAt = new System.Collections.Generic.Dictionary<Flight, float>();
+        private static void Trace(Aircraft aircraft, Flight flight, AIHeloTransportState state)
+        {
+            if (!Tuning.FlightTrace) return;
+            float now = Time.timeSinceLevelLoad;
+            if (tracedAt.TryGetValue(flight, out float at) && now - at < 4f) return;
+            tracedAt[flight] = now;
+            if (tracedAt.Count > 200) tracedAt.Clear();
+            ControlInputs inputs = aircraft.GetInputs();
+            float sink = aircraft.rb != null ? -aircraft.rb.velocity.y : 0f;
+            bool overWater = TaskForces.Navigable(aircraft.GlobalPosition(), 1f);
+            Host.LogInfo("[cargo] " + flight.Name + " · " + (state.stateDisplayName ?? "transport") +
+                " · alt " + aircraft.radarAlt.ToString("0") + " m · spd " + aircraft.speed.ToString("0") + " · sink " + sink.ToString("0") +
+                " · collective " + (inputs != null ? (inputs.throttle * 100f).ToString("0") + "%" : "?") +
+                " · pusher " + (inputs != null ? inputs.customAxis1.ToString("0.00") : "?") +
+                " · LZ " + (FastMath.Distance(aircraft.GlobalPosition(), flight.CargoPoint) / 1000f).ToString("0.0") + " km" +
+                (overWater ? " · over water" : "") + " · flight assist " + (aircraft.flightAssist ? "on" : "off"));
         }
 
         private const string Name = "Cargo missions";

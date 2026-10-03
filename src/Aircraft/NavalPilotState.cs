@@ -950,7 +950,13 @@ namespace NOrders
                 // not over the ground at the point. Two Ifrits on a 600 m
                 // run-in held the height of the target's ground while the land
                 // rose under them -- radar altitude 354, 231, 46 -- and hit it.
-                bool followTerrain = aboveGround < 1500f && unloadTo <= 0f;
+                // ... but not while recovering energy with height in hand: the
+                // autopilot's terrain-following pull-up at low speed stalled
+                // Vortexes over the hills -- Talon-1, 162 -> 75 m/s at 5.6 g from
+                // 1,100 m, into a spin with no height left to fly it out. Our own
+                // ground floor (the steer point never under ground plus
+                // clearance) still holds; under 250 m the autopilot has it again.
+                bool followTerrain = aboveGround < 1500f && unloadTo <= 0f && !(recoveringSince >= 0f && aircraft.radarAlt > 250f);
                 GlobalPosition from = aircraft.GlobalPosition();
                 // Never a steering point close in: the autopilot pulls up hard
                 // -- two kilometres of up on a one-kilometre vector, fifty
@@ -1128,7 +1134,11 @@ namespace NOrders
             // loaded Ibises fell from 700 m into the sea together with nothing
             // hit, collective at 0-12% at impact. Tiltwings fly on their wings
             // at speed and are left to their own autopilot.
-            if (RotaryKind(aircraft) != Rotary.Tiltwing && aircraft.rb != null)
+            // Disabled: fired once in a live game (Ferry, an Ibis settling at
+            // 252 m) and the helicopter still fell 120 m and crashed; pulling
+            // collective into a settling rotor can make it worse. Kept for the
+            // trace until the Ibis falls are understood.
+            if (false && RotaryKind(aircraft) != Rotary.Tiltwing && aircraft.rb != null)
             {
                 float sink = -aircraft.rb.velocity.y;
                 if (sink > 12f && aircraft.radarAlt < 250f + sink * 4f)
