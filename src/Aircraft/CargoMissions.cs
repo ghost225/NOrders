@@ -217,8 +217,8 @@ namespace NOrders
 
         // Ibises cruised at 120-138 m/s, 30 m over the sea, pusher at full
         // (the state asks for full forward thrust whenever the landing zone is
-        // more than a few hundred metres off). At that speed the rotor sagged
-        // below its governed speed, and the game's autopilot answers a sagging
+        // more than a few hundred metres off). The pusher starved the rotor
+        // (see RotorFirstPatch), and the game's autopilot answers a sagging
         // rotor by dropping the collective to nothing -- from 30 m that is the
         // sea. One shed its blades flying straight and level. So the pusher
         // eases to neutral from 60% of top speed and is neutral by 75%, and
@@ -259,11 +259,8 @@ namespace NOrders
         // The rotor's speed against its governed speed, for the trace.
         private static string Rotor(Aircraft aircraft)
         {
-            if (aircraft?.engines == null) return "?";
-            float sum = 0f; int n = 0;
-            foreach (IEngine engine in aircraft.engines)
-                if (engine is RotorShaft shaft) { sum += shaft.GetRPMRatio(); n++; }
-            return n > 0 ? (sum / n * 100f).ToString("0") + "%" : "?";
+            float ratio = RotorFirstPatch.RotorRatio(aircraft);
+            return ratio >= 0f ? (ratio * 100f).ToString("0") + "%" : "?";
         }
 
         // How the game's transport state flies our cargo flights: our own
