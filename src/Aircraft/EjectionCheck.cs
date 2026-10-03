@@ -13,6 +13,7 @@ namespace NOrders
     {
         private static readonly Dictionary<Aircraft, float> nextCheck = new Dictionary<Aircraft, float>();
         internal static int Ejected;
+        private static readonly Dictionary<Aircraft, int> tumbling = new Dictionary<Aircraft, int>();
 
         internal static void Tick()
         {
@@ -30,6 +31,7 @@ namespace NOrders
                 Ejected++;
             }
             if (nextCheck.Count > 500) nextCheck.Clear();
+            if (tumbling.Count > 100) tumbling.Clear();
         }
 
         private static bool Doomed(Aircraft aircraft, out string why)
@@ -46,7 +48,14 @@ namespace NOrders
                     // slow aeroplane in a hard turn can read backward for a frame.
                     Vector3 forward = aircraft.cockpit != null && aircraft.cockpit.xform != null ? aircraft.cockpit.xform.forward : aircraft.transform.forward;
                     bool rotary = FlightOrders.IsRotary(FlightOrders.FirstPilot(aircraft));
-                    if (!rotary && aircraft.rb.velocity.sqrMagnitude > 900f && Vector3.Dot(forward.normalized, aircraft.rb.velocity.normalized) < -0.3f) { why = "tumbling"; return true; }
+                    // High up, a departure can still be flown out of (the spin
+                    // recovery): an intact F-16 was abandoned at 6,900 m on one
+                    // backward sample. Above 1,500 m it has to keep tumbling
+                    // for three checks running.
+                    bool backward = !rotary && aircraft.rb.velocity.sqrMagnitude > 900f && Vector3.Dot(forward.normalized, aircraft.rb.velocity.normalized) < -0.3f;
+                    int seen = backward ? (tumbling.TryGetValue(aircraft, out int n) ? n : 0) + 1 : 0;
+                    if (seen > 0) tumbling[aircraft] = seen; else tumbling.Remove(aircraft);
+                    if (backward && (aircraft.radarAlt < 1500f || seen >= 3)) { why = "tumbling"; return true; }
                     if (aircraft.partDamageTracker != null && aircraft.partDamageTracker.GetDetachedRatio() > 0.12f) { why = "airframe breaking up"; return true; }
                 }
                 if (aircraft.transform.position.y < Datum.LocalSeaY) { why = "in the water"; return true; }

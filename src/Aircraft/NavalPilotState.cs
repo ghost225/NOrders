@@ -577,6 +577,9 @@ namespace NOrders
             chaffOffAt = now + 0.15f;
         }
 
+        private Missile beamShot;
+        private float beamAlt;
+
         private void FlyBeam(Missile missile, bool descend)
         {
             Vector3 toMissile = Flat(missile.transform.position - aircraft.transform.position);
@@ -595,8 +598,13 @@ namespace NOrders
                 if (Mathf.Abs(toward) > 0.25f) beam = toward > 0f ? left : -left;
             }
             float ordered = flight.Altitude;
+            // The descent is set once per shot: 70% of the height it started
+            // at. Taken from the present height every step it was a target
+            // that ran away downward, and an F-16 beaming a radar shot went
+            // from 3,700 m to the ground at 400 m/s.
+            if (descend && beamShot != missile) { beamShot = missile; beamAlt = Mathf.Max(Mathf.Min(aircraft.radarAlt * 0.7f, ordered), Tuning.RadarEvasionFloor); }
             flight.Altitude = descend
-                ? Mathf.Max(Mathf.Min(aircraft.radarAlt * 0.7f, ordered), Tuning.RadarEvasionFloor)
+                ? beamAlt
                 : Mathf.Max(Mathf.Min(aircraft.radarAlt, ordered), MinimumClearance);
             Steer(aircraft.GlobalPosition() + beam * 4000f, default, Mathf.Min(60f, SafeBank()));
             flight.Altitude = ordered;
