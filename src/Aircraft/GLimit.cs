@@ -108,6 +108,17 @@ namespace NOrders
             return limit;
         }
 
+        // The limit this airframe is held to: its fly-by-wire's, never over SafeG.
+        internal static float LimitOf(Aircraft aircraft)
+        {
+            if (aircraft == null) return SafeG;
+            if (states.TryGetValue(aircraft, out State state) && state.Limit > 0f) return state.Limit;
+            ControlsFilter filter = aircraft.GetControlsFilter();
+            ControlsFilter.FlyByWire fbw = filter != null ? filter.GetFlyByWire() : null;
+            bool on = fbw != null && FbwEnabled?.GetValue(fbw) is bool enabled && enabled;
+            return on && FbwLimit?.GetValue(fbw) is float limit && limit > 1f ? Mathf.Min(limit, SafeG) : SafeG;
+        }
+
         // The worst load over the last few seconds, for the trace.
         internal static float Peak(Aircraft aircraft) =>
             aircraft != null && states.TryGetValue(aircraft, out State state) ? state.Peak : 0f;

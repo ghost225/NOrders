@@ -415,11 +415,15 @@ namespace NOrders
             // Never a circle tighter than the speed allows at a sane bank: a
             // 2.5 km join-up circle at 437 m/s wants 82 degrees and over 7 g,
             // and a Vortex lead forming up pulled 9-14 g on it until it came
-            // apart. At most 60 degrees (2 g), and less where the stall
-            // margin says so; the circle widens instead.
+            // apart. A sustained turn at up to 70% of the airframe's G limit
+            // (an FS-41's 7 g: about 4.9 g, 78 degrees), and less where the
+            // stall margin says so; the circle widens instead. At 60 degrees
+            // (2 g) as first written it flew far wider circles than a pilot
+            // would, and wider than the FS-41 turns comfortably at 7 g.
             if (aircraft.autopilot is AutopilotPlane)
             {
-                float bank = Mathf.Min(SafeBank(), 60f) * Mathf.Deg2Rad;
+                float sustained = Mathf.Max(GLimitPatch.LimitOf(aircraft) * 0.7f, 1.5f);
+                float bank = Mathf.Min(SafeBank(), Mathf.Acos(1f / sustained) * Mathf.Rad2Deg) * Mathf.Deg2Rad;
                 float tightest = aircraft.speed * aircraft.speed / (9.81f * Mathf.Tan(bank)) * 1.15f;
                 radius = Mathf.Max(radius, tightest);
             }
@@ -476,7 +480,7 @@ namespace NOrders
         // How hard to bank with the speed in hand: from the load the wing can
         // give above its stall -- (speed / stall)^2 g -- with a wide margin,
         // the bank whose level turn needs no more than that. Twenty degrees
-        // at least, seventy at most. Reckoned from corner speed instead, a
+        // at least, eighty at most. Reckoned from corner speed instead, a
         // jet cruising right at it (the FS-41's 180 m/s) was held to 25
         // degrees, could not fly its circle, and the autopilot made up the
         // turn by pulling -- at that bank mostly upward, so it spiralled up
@@ -493,7 +497,7 @@ namespace NOrders
             float ratio = aircraft.speed / stall;
             float load = ratio * ratio * 0.45f;
             float bank = load <= 1f ? 0f : Mathf.Acos(1f / load) * Mathf.Rad2Deg;
-            return Mathf.Clamp(bank, 20f, 70f);
+            return Mathf.Clamp(bank, 20f, 80f);
         }
 
         private static Vector3 Flat(Vector3 value)
@@ -957,10 +961,12 @@ namespace NOrders
                     float banked = Mathf.Min(bank, SafeBank()) * Mathf.Clamp(aircraft.radarAlt * 0.003f - 1f, 0.6f, 1.2f);
                     float lateral = Mathf.Lerp(12f, 90f, Mathf.InverseLerp(20f, 65f, banked));
                     // And less the faster it goes: the same angle off is a
-                    // harder pull at speed. About 4 g's worth at the
-                    // autopilot's pace -- 10 degrees at 440 m/s, 30 at 150.
-                    // A wingman gets half as much again, to hold its slot.
-                    float bySpeed = Mathf.Clamp(Mathf.Rad2Deg * 80f / Mathf.Max(aircraft.speed, 1f), 8f, 90f);
+                    // harder pull at speed. About 85% of the airframe's G
+                    // limit at the autopilot's pace -- for an FS-41 (7 g),
+                    // 15 degrees at 440 m/s, 44 at 150. A wingman gets half
+                    // as much again, to hold its slot.
+                    float pull = GLimitPatch.LimitOf(aircraft) * 0.85f * 9.81f * 2f;
+                    float bySpeed = Mathf.Clamp(Mathf.Rad2Deg * pull / Mathf.Max(aircraft.speed, 1f), 8f, 90f);
                     if (flight.Mode == FlightMode.Formation) bySpeed *= 1.5f;
                     else lateral = Mathf.Min(lateral, bySpeed);
                     if (flight.Mode == FlightMode.Formation) lateral = bySpeed;
