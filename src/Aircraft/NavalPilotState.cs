@@ -1019,6 +1019,19 @@ namespace NOrders
                 LimitSpeed();
                 // The game's own G and AoA limits, kept on (see EnterState).
                 if (!aircraft.flightAssist) aircraft.SetFlightAssist(enabled: true);
+                // And the auto-hover off. A VTOL type (FS-20 Vortex, EW-25
+                // Medusa) is handed over from a vertical or short takeoff with
+                // the game's auto-hover still active, and while it is active it
+                // flies the aircraft itself: levels it toward a hover, slows it to
+                // hover speed, points the ducts down and sets the throttle for
+                // height. A Vortex in energy recovery looked to have its throttle
+                // cut and its airbrakes out, mushed into a flat spin and went in;
+                // the same is likely behind most of the Vortex losses this week.
+                if (aircraft.radarAlt > 5f && aircraft.IsAutoHoverEnabled())
+                {
+                    aircraft.GetControlsFilter().SetAutoHover(false);
+                    Tracing.Flight("[flight] " + flight.Name + " · auto-hover was on under our control; switched off");
+                }
                 autopilot.AutoAim(point, aimVelocity: true, ignoreCollisions: false, runwayAlign: false,
                     effort: 1f, bankAllowed: bank, followTerrain: followTerrain,
                     altitudeHold: aboveGround, targetVelocity: velocity);

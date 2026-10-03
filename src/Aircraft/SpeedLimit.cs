@@ -48,6 +48,9 @@ namespace NOrders
                 if (aircraft == null || !(aircraft.autopilot is AutopilotPlane)) return;
                 Flight flight = FlightOrders.Of(aircraft);
                 if (flight == null || Host.IsFlownByPlayer(flight)) return;
+                // Auto-hover acts beneath any pilot state; the combat pilot never
+                // switches it off either (see NavalPilotState.Steer).
+                if (aircraft.radarAlt > 5f && aircraft.IsAutoHoverEnabled()) aircraft.GetControlsFilter().SetAutoHover(false);
                 if (SpeedLimit.Apply(aircraft, aircraft.GetInputs()) && SpeedLimit.Over(aircraft) >= 1f && Time.timeSinceLevelLoad >= noteAt)
                 {
                     noteAt = Time.timeSinceLevelLoad + 15f;
