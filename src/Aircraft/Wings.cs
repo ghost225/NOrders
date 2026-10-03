@@ -23,6 +23,7 @@ namespace NOrders
             internal bool JoiningUp;
             internal GlobalPosition JoinPoint;
             internal float JoinStarted, NextJoinAllowed;
+            internal float FormedAt;            // when the first member joined
         }
 
         private static readonly Dictionary<string, Record> wings = new Dictionary<string, Record>();
@@ -36,10 +37,28 @@ namespace NOrders
         {
             if (flight?.Wing == null) return;
             if (!wings.TryGetValue(flight.Wing, out Record record))
-                wings[flight.Wing] = record = new Record { Name = flight.Wing };
+                wings[flight.Wing] = record = new Record { Name = flight.Wing, FormedAt = Time.timeSinceLevelLoad };
             if (!Alive(record.Lead) || record.Lead.Wing != record.Name)
             {
                 record.Lead = flight;
+                return;
+            }
+            // The lead is -1, not whichever came off the deck first: a hangar
+            // with its door already open spawns at once, so -2 could be in the
+            // air before -1 and lead the wing. A lower callsign joining while
+            // the wing is still forming (its first minute) takes the lead, with
+            // the orders, and the early one falls into formation on it.
+            if (Time.timeSinceLevelLoad - record.FormedAt < 60f &&
+                string.CompareOrdinal(flight.Label ?? "", record.Lead.Label ?? "") < 0)
+            {
+                Flight early = record.Lead;
+                flight.Mode = FlightMode.Formation;      // so the early one's orders are taken over
+                TakeOver(record, flight, early);
+                early.Mode = FlightMode.Formation;
+                early.Altitude = flight.Altitude;
+                early.Roe = flight.Roe;
+                early.Adopted = false;
+                Host.LogInfo("[wing] " + record.Name + " · " + flight.Name + " leads (" + early.Name + " was up first)");
                 return;
             }
             flight.Mode = FlightMode.Formation;
@@ -491,8 +510,16 @@ namespace NOrders
             if (!wings.TryGetValue(wing, out Record record)) return;
             Flight next = null;
             foreach (Flight member in Members(wing)) { next = member; break; }
+            if (next == null) { record.Lead = null; return; }
+            TakeOver(record, next, previous);
+            Host.LogInfo("[wing] " + wing + " · " + next.Name + " takes the lead");
+            Host.Say(wing + " · " + next.Name + " takes the lead");
+        }
+
+        // `next` becomes the lead, carrying on with `previous`'s orders.
+        private static void TakeOver(Record record, Flight next, Flight previous)
+        {
             record.Lead = next;
-            if (next == null) return;
             if (previous != null && next.Mode == FlightMode.Formation)
             {
                 next.Mode = previous.Mode == FlightMode.Formation ? FlightMode.Orbit : previous.Mode;
@@ -511,8 +538,6 @@ namespace NOrders
                     next.OrbitCentre = next.Aircraft.GlobalPosition();
                 next.Adopted = false;
             }
-            Host.LogInfo("[wing] " + wing + " · " + next.Name + " takes the lead");
-            Host.Say(wing + " · " + next.Name + " takes the lead");
         }
     }
 
