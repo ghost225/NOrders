@@ -216,7 +216,7 @@ namespace NOrders
 
         // Why a flight needs attention, or null when it doesn't. Nothing here
         // stays up for good:
-        //   missile inbound -- while a missile is on it;
+        //   evading ARH (or SARH, IR, OPT...) -- while a missile is on it;
         //   low fuel        -- while it is not already heading home (the
         //                      pilot turns for home on its own at 20%);
         //   out of weapons, or a weapon type run dry -- events, shown for a
@@ -226,11 +226,32 @@ namespace NOrders
         private readonly HashSet<string> acknowledged = new HashSet<string>();
         private const float EventSeconds = 60f;
 
+        // What is coming, in the short form a pilot would call it: ARH, SARH,
+        // IR, OPT (optical or inertial/optical), LASER, ARM -- by the game's own
+        // reading of the nearest missile's seeker.
+        public string ThreatKind
+        {
+            get
+            {
+                string seeker = "";
+                try { if (ThreatMissile != null && !ThreatMissile.disabled) seeker = ThreatMissile.GetSeekerType() ?? ""; } catch { }
+                switch (seeker)
+                {
+                    case "ARH": case "SARH": case "IR": return seeker;
+                    case "Optical": case "INS / Opt.": return "OPT";
+                    case "INS": return "INS";
+                    case "Laser": return "LASER";
+                    case "ARAD": return "ARM";
+                    default: return ThreatIsInfrared ? "IR" : "MISSILE";
+                }
+            }
+        }
+
         public string Attention
         {
             get
             {
-                if (Threat == FlightThreat.Missile) return "missile inbound";
+                if (Threat == FlightThreat.Missile) return (StandOn ? "defending " : "evading ") + ThreatKind;
                 bool heading = Mode == FlightMode.ReturnToBase;
                 if (!heading && FuelPercent < Tuning.LowFuelAlert) return "low fuel";
                 UpdateEvents();
@@ -324,7 +345,7 @@ namespace NOrders
         {
             get
             {
-                if (Threat == FlightThreat.Missile) return StandOn ? "DEFENDING" : "EVADING";
+                if (Threat == FlightThreat.Missile) return (StandOn ? "DEFENDING " : "EVADING ") + ThreatKind;
                 Unit fighting = NativeTarget();
                 if (Interrupted)
                     return fighting == null ? "ENGAGING"
