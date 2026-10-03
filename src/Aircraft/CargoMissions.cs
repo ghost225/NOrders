@@ -305,3 +305,51 @@ namespace NOrders
         }
     }
 }
+
+namespace NOrders
+{
+    // The game's transport state answers a missile with chaff and flares and
+    // nothing else: a cargo helicopter flew straight on at the shot. Shot at
+    // with a radar missile, it notches -- turns across the missile's line,
+    // whichever way is nearer its heading, and comes down low into the ground
+    // clutter a semi-active radar has to look through -- and picks its
+    // delivery up again once the shot is gone. The transport state keeps
+    // running throughout; only where it steers changes.
+    [HarmonyPatch(typeof(AutopilotHelo), nameof(AutopilotHelo.AutoAim),
+        new[] { typeof(GlobalPosition), typeof(float), typeof(Vector3), typeof(Vector3), typeof(bool) })]
+    internal static class CargoNotchPatch
+    {
+        private const string Name = "Cargo notch";
+        private const float NotchReach = 1500f;      // bounded, for the helicopter's tilt controller
+        private const float NotchHeight = 40f;
+        private static readonly System.Collections.Generic.HashSet<Missile> noted = new System.Collections.Generic.HashSet<Missile>();
+
+        private static void Prefix(AutopilotHelo __instance, ref GlobalPosition destination, ref float altitudeHold)
+        {
+            if (!Guard.Ok(Name)) return;
+            try
+            {
+                Aircraft aircraft = CargoTargetPatch.liftFor;
+                if (aircraft == null || __instance.aircraft != aircraft) return;
+                Flight flight = FlightOrders.Of(aircraft);
+                Missile missile = flight?.ThreatMissile;
+                if (flight == null || flight.Threat != FlightThreat.Missile || flight.ThreatIsInfrared || missile == null || missile.disabled) return;
+                GlobalPosition here = aircraft.GlobalPosition();
+                Vector3 line = here - missile.GetEvasionPoint();
+                line.y = 0f;
+                if (line.sqrMagnitude < 1f) return;
+                Vector3 beam = Vector3.Cross(line.normalized, Vector3.up);
+                Vector3 heading = aircraft.transform.forward; heading.y = 0f;
+                if (Vector3.Dot(beam, heading) < 0f) beam = -beam;
+                destination = here + beam * NotchReach;
+                altitudeHold = Mathf.Min(altitudeHold, NotchHeight);
+                if (noted.Add(missile))
+                {
+                    if (noted.Count > 200) noted.Clear();
+                    Tracing.Flight("[cargo] " + flight.Name + " · radar shot at " + UnitConverter.DistanceReading(flight.ThreatRange) + ", notching");
+                }
+            }
+            catch (Exception ex) { Guard.Failed(Name, ex); }
+        }
+    }
+}

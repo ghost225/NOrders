@@ -1961,6 +1961,12 @@ namespace NOrders
             cover = "";
             List<MissileJamming.Pod> pods = MissileJamming.Pods(aircraft);
             if (pods.Count == 0) return false;             // only an aircraft that can jam holds on
+            // A helicopter never bets on its pods alone: too slow to get away
+            // if they fail, and a semi-active shot is beaten as much by the
+            // notch and the ground clutter as by jamming. One holding its
+            // course on its pods flew straight at the missile. The pods still
+            // jam; the combat pilot notches.
+            if (IsRotary(FirstPilot(aircraft))) return false;
             float reach = pods.Count > 0 && pods[0].Station?.WeaponInfo != null && pods[0].Station.WeaponInfo.targetRequirements.maxRange > 0f
                 ? pods[0].Station.WeaponInfo.targetRequirements.maxRange : 20000f;
             FactionHQ hq = aircraft.NetworkHQ;
