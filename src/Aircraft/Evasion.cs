@@ -91,3 +91,69 @@ namespace NOrders
         }
     }
 }
+
+namespace NOrders
+{
+    // A heat-seeker at one of our jets, with the game's combat pilot flying
+    // it: its own heat-seeker evasion does not manoeuvre at all -- throttle
+    // to zero (the airbrake) and the flare button held -- and NativeIrEvasionPatch
+    // replaces that with idle and our flare strings. This gives it the turn:
+    // the shot put on the beam, whichever side faces home when one clearly
+    // does, otherwise the side nearer the nose, the way our own beam flew it.
+    // And the throttle comes off whether or not the game has noticed the shot
+    // (a heat-seeker often gives no warning), which its own evasion never
+    // would. Everything else -- height, the fight it was in, the end of it --
+    // is the game's, under the G, speed, airbrake and ground guards.
+    [HarmonyPatch(typeof(AIPilotCombatModes), "RunEvadeMode")]
+    internal static class NativeIrBeamPatch
+    {
+        private const string Name = "Heat-seeker beam";
+        private static readonly AccessTools.FieldRef<PilotBaseState, Aircraft> AircraftOf =
+            AccessTools.FieldRefAccess<PilotBaseState, Aircraft>("aircraft");
+        private static readonly AccessTools.FieldRef<PilotBaseState, ControlInputs> InputsOf =
+            AccessTools.FieldRefAccess<PilotBaseState, ControlInputs>("controlInputs");
+        private static readonly HashSet<Missile> noted = new HashSet<Missile>();
+
+        private static void Postfix(AIPilotCombatModes __instance, ref GlobalPosition evadeDestination)
+        {
+            if (!Guard.Ok(Name) || Tuning.OwnIrEvasion) return;
+            try
+            {
+                Aircraft aircraft = AircraftOf(__instance);
+                if (aircraft == null || !(aircraft.autopilot is AutopilotPlane)) return;
+                Flight flight = FlightOrders.Of(aircraft);
+                if (flight == null || Host.IsFlownByPlayer(flight) || !flight.EvadingInfrared) return;
+                Missile missile = flight.ThreatMissile;
+
+                ControlInputs inputs = InputsOf(__instance);
+                if (inputs != null && Time.timeSinceLevelLoad < flight.ThrottleCutUntil)
+                {
+                    inputs.throttle = IrDefence.EvasionThrottle(aircraft);
+                    AuxAxis.Apply(aircraft, inputs);
+                }
+
+                Vector3 toMissile = missile.transform.position - aircraft.transform.position;
+                toMissile.y = 0f;
+                if (toMissile.sqrMagnitude < 1f) return;
+                toMissile.Normalize();
+                Vector3 left = new Vector3(-toMissile.z, 0f, toMissile.x);
+                Vector3 forward = aircraft.transform.forward; forward.y = 0f;
+                Vector3 beam = Vector3.Dot(forward, left) >= 0f ? left : -left;
+                Vector3 home = flight.HomePosition - aircraft.GlobalPosition(); home.y = 0f;
+                if (flight.Home != null && home.sqrMagnitude > 1000f * 1000f)
+                {
+                    float toward = Vector3.Dot(home.normalized, left);
+                    if (Mathf.Abs(toward) > 0.25f) beam = toward > 0f ? left : -left;
+                }
+                evadeDestination = (aircraft.transform.position + beam * 1000f).ToGlobalPosition();
+                if (noted.Add(missile))
+                {
+                    if (noted.Count > 200) noted.Clear();
+                    Tracing.Flight("[flight] " + flight.Name + " · heat-seeker at " + UnitConverter.DistanceReading(flight.ThreatRange) +
+                        " · the combat pilot beams it, idle, our flares");
+                }
+            }
+            catch (Exception ex) { Guard.Failed(Name, ex); }
+        }
+    }
+}

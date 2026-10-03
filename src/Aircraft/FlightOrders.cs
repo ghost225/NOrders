@@ -114,6 +114,9 @@ namespace NOrders
         // shot, flares for the rest -- so it keeps to its orders.
         public bool StandOn;
         public bool EvadingInfrared => !StandOn && Threat == FlightThreat.Missile && ThreatIsInfrared && ThreatMissile != null && !ThreatMissile.disabled;
+        // Whether the game's combat pilot takes this shot (with our guardrails)
+        // rather than our own state: per seeker, by setting.
+        public bool NativeEvades => Threat == FlightThreat.Missile && (ThreatIsInfrared ? !Tuning.OwnIrEvasion : !Tuning.OwnRadarEvasion);
         // A radar shot inbound and our state keeping the aircraft: beam, chaff, descend.
         public bool EvadingRadar => !StandOn && Tuning.OwnRadarEvasion && Threat == FlightThreat.Missile && !ThreatIsInfrared && ThreatMissile != null && !ThreatMissile.disabled;
         public float NextFlare;
@@ -2033,14 +2036,14 @@ namespace NOrders
                 return flight.RunInDone || (flight.Threat == FlightThreat.Missile && !flight.ThreatIsInfrared && !Tuning.OwnRadarEvasion);
             if (flight.Mode == FlightMode.Engage) return true;
             if (flight.Mode == FlightMode.Cargo) return false;       // the transport state has it (CargoNotchPatch notches it)
-            // A helicopter shot at with a radar missile goes to the game's
-            // helicopter pilot, which notches. Our own radar evasion beams
+            // A helicopter shot at goes to the game's helicopter pilot, which
+            // notches a radar shot and turns across a heat-seeker. Our own radar evasion beams
             // fixed-wing only, so with it on a helicopter was neither handed
             // over nor flown off the shot: it kept to its task, at the missile.
-            if (flight.Threat == FlightThreat.Missile && !flight.ThreatIsInfrared && !flight.StandOn &&
+            if (flight.Threat == FlightThreat.Missile && !flight.StandOn &&
                 IsRotary(FirstPilot(flight.Aircraft))) return true;
             // Jamming holds station; only an actual shot takes it off the job.
-            if (flight.Mode == FlightMode.Jam) return flight.Threat == FlightThreat.Missile && !flight.ThreatIsInfrared && !Tuning.OwnRadarEvasion;
+            if (flight.Mode == FlightMode.Jam) return flight.NativeEvades;
 
             // Leaving outranks evading, up to a point. Turning to fight a shot
             // that is still thirty kilometres away just keeps the aircraft in
@@ -2051,14 +2054,16 @@ namespace NOrders
             if (flight.Mode == FlightMode.Egress)
             {
                 if (flight.Threat != FlightThreat.Missile) return false;
-                if (flight.ThreatIsInfrared || Tuning.OwnRadarEvasion) return false;   // flown off on the beam by our state
-                return flight.ThreatRange <= Tuning.RadarHandover;
+                if (!flight.NativeEvades) return false;                 // flown off on the beam by our state
+                // A heat-seeker's endgame is short: handed over at once. A
+                // radar shot is run from until it is genuinely close.
+                return flight.ThreatIsInfrared || flight.ThreatRange <= Tuning.RadarHandover;
             }
 
             // Evasion is never a choice: being shot at overrides Weapons Hold.
             // A radar shot goes to the native pilot, who notches and dives; a
             // heat-seeker is ours: idle, beam, flares (see IrDefence).
-            if (flight.Threat == FlightThreat.Missile) return !flight.ThreatIsInfrared && !Tuning.OwnRadarEvasion;
+            if (flight.Threat == FlightThreat.Missile) return flight.NativeEvades;
             if (flight.Roe == FlightRoe.Hold) return false;
             // Not to start a fight on the way home, nor while too slow to
             // fight: a Vortex returning at 98 m/s and 976 m was handed to the
