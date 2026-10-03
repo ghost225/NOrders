@@ -130,6 +130,13 @@ namespace NOrders
 
             Report();
 
+            // A flat spin is not flown out by steering: the autopilot's pitch
+            // and roll only wind it tighter. Idle, rudder against the rotation,
+            // stick forward, until the rotation stops; then the energy
+            // recovery below dives it out. (Warden-1, an FS-20, spun from
+            // 1,100 m at 50 m/s into the sea.)
+            if (aircraft.autopilot is AutopilotPlane && SpinRecovery()) return;
+
             // On the ground and barely moving under our state: whatever put it
             // here, it cannot be flown from the deck by a navigation loop.
             // Hand it back to the game's taxi and takeoff and take it again
@@ -1017,6 +1024,7 @@ namespace NOrders
                 if (over >= 0.5f && point.y < from.y + (over >= 1f ? 150f : 0f)) point += Vector3.up * (from.y + (over >= 1f ? 150f : 0f) - point.y);
                 destination = point;
                 LimitSpeed();
+                IntendedThrottle = controlInputs.throttle;
                 // The game's own G and AoA limits, kept on (see EnterState).
                 if (!aircraft.flightAssist) aircraft.SetFlightAssist(enabled: true);
                 // And the auto-hover off. A VTOL type (FS-20 Vortex, EW-25
@@ -1125,6 +1133,55 @@ namespace NOrders
         }
 
         private float sinkSaidAt = -100f;
+
+        // ---- flat spin --------------------------------------------------------------------
+        // Signs from the game's own controllers: positive pitch input pitches
+        // the nose down (rotation about +x), positive yaw yaws it right (+y).
+        private float spinSince = -1f, spinClearSince = -1f, spinSaidAt = -100f;
+        private bool spinning;
+        internal float IntendedThrottle = -1f;     // what we last set, for the throttle guard
+
+        private bool SpinRecovery()
+        {
+            if (aircraft.rb == null || aircraft.radarAlt < 20f) { spinning = false; spinSince = -1f; return false; }
+            Vector3 w = aircraft.transform.InverseTransformDirection(aircraft.rb.angularVelocity);
+            float yawRate = w.y * Mathf.Rad2Deg;
+            float corner = parameters != null && parameters.cornerSpeed > 0f ? parameters.cornerSpeed : 150f;
+            float sink = -aircraft.rb.velocity.y;
+            bool spinNow = Mathf.Abs(yawRate) > 35f && aircraft.speed < corner * 0.7f && sink > 8f;
+            float now = Time.timeSinceLevelLoad;
+            if (!spinning)
+            {
+                if (!spinNow) { spinSince = -1f; return false; }
+                if (spinSince < 0f) spinSince = now;
+                if (now - spinSince < 1.5f) return false;              // a hard turn is not a spin
+                spinning = true; spinClearSince = -1f;
+            }
+            else if (Mathf.Abs(yawRate) < 15f)
+            {
+                if (spinClearSince < 0f) spinClearSince = now;
+                if (now - spinClearSince > 1f)
+                {
+                    spinning = false; spinSince = -1f;
+                    Tracing.Flight("[flight] " + flight.Name + " · spin broken at " + aircraft.radarAlt.ToString("0") + " m, " + aircraft.speed.ToString("0") + " m/s; diving out");
+                    return false;
+                }
+            }
+            else spinClearSince = -1f;
+
+            controlInputs.throttle = 0.05f;                         // idle, not zero: zero opens the airbrakes
+            IntendedThrottle = controlInputs.throttle;
+            controlInputs.yaw = -Mathf.Sign(yawRate);               // full rudder against the rotation
+            controlInputs.pitch = 0.8f;                             // stick forward
+            controlInputs.roll = 0f;
+            controlInputs.brake = 0f;
+            if (now - spinSaidAt > 5f)
+            {
+                spinSaidAt = now;
+                Tracing.Flight("[flight] " + flight.Name + " · flat spin · yaw " + yawRate.ToString("0") + "°/s at " + aircraft.speed.ToString("0") + " m/s, sinking " + sink.ToString("0") + " m/s at " + aircraft.radarAlt.ToString("0") + " m · idle, opposite rudder, stick forward");
+            }
+            return true;
+        }
 
         // Only these autopilots actually implement an AutoAim; anything else
         // would be flown by a method with an empty body.

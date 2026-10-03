@@ -83,9 +83,35 @@ namespace NOrders
 
         // And a backstop after it: well over the limit, whatever the filter
         // made of the stick, the elevator is eased as well.
+        // A throttle set to exactly zero opens the airbrakes. Something zeroed
+        // Warden-1's throttle (an FS-20 under our control, which set full
+        // power every step) as it spun in; our code never sets zero in
+        // flight. After the input filter, a fixed-wing under our state that
+        // finds its throttle at zero when we asked for power gets it back,
+        // and what was running is logged once per flight.
+        private static readonly HashSet<Aircraft> zeroedSaid = new HashSet<Aircraft>();
+        private static void ThrottleGuard(Aircraft aircraft)
+        {
+            try
+            {
+                if (aircraft == null || !(aircraft.autopilot is AutopilotPlane) || aircraft.radarAlt < 5f) return;
+                Pilot pilot = FlightOrders.FirstPilot(aircraft);
+                if (!(pilot?.currentState is NavalPilotState state) || state.IntendedThrottle < 0.05f) return;
+                ControlInputs inputs = aircraft.GetInputs();
+                if (inputs == null || inputs.throttle > 0.001f) return;
+                inputs.throttle = state.IntendedThrottle;
+                Flight flight = FlightOrders.Of(aircraft);
+                if (flight != null && zeroedSaid.Add(aircraft))
+                    Host.LogWarning("[flight] " + flight.Name + " · throttle found at zero after the input filter (we asked " + (state.IntendedThrottle * 100f).ToString("0") + "%) · auto-hover " + (aircraft.IsAutoHoverEnabled() ? "ON" : "off") + " · restored");
+                if (zeroedSaid.Count > 200) zeroedSaid.Clear();
+            }
+            catch { }
+        }
+
         private static void Postfix(Aircraft __instance)
         {
             if (!Guard.Ok(Name)) return;
+            ThrottleGuard(__instance);
             try
             {
                 if (__instance == null || !states.TryGetValue(__instance, out State state) || state.Limit <= 0f) return;
