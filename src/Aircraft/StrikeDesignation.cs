@@ -153,9 +153,9 @@ namespace NOrders
             // under half a minute out. A missile far across the map, or one
             // that has lost it, is no reason to leave an immediate threat alone.
             int live = 0;
-            foreach (Unit unit in UnitRegistry.allUnits)
+            foreach (Missile missile in MissileIndex.At(target))
             {
-                if (!(unit is Missile missile) || missile.disabled || missile.NetworkHQ != hq || missile.targetID != target.persistentID) continue;
+                if (missile == null || missile.disabled || missile.NetworkHQ != hq || missile.targetID != target.persistentID) continue;
                 Vector3 toTarget = target.GlobalPosition() - missile.GlobalPosition();
                 float range = toTarget.magnitude;
                 if (range > 12000f) continue;

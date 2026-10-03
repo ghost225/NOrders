@@ -156,9 +156,9 @@ namespace NOrders
             var guarded = new Dictionary<PersistentID, Aircraft>();
             foreach (Flight member in protectedGroup)
                 if (member.Aircraft != null) guarded[member.Aircraft.persistentID] = member.Aircraft;
-            foreach (Unit unit in UnitRegistry.allUnits)
+            foreach (Missile incoming in MissileIndex.All)
             {
-                if (!(unit is Missile incoming) || incoming.disabled || intercepted.ContainsKey(incoming)) continue;
+                if (incoming == null || incoming.disabled || intercepted.ContainsKey(incoming)) continue;
                 if (!guarded.TryGetValue(incoming.targetID, out Aircraft victim)) continue;
                 if (incoming.NetworkHQ != null && incoming.NetworkHQ == victim.NetworkHQ) continue;
                 foreach (Flight escort in escorts)

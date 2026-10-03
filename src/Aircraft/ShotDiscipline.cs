@@ -210,9 +210,9 @@ namespace NOrders
             int live = 0;
             float now = Time.timeSinceLevelLoad;
             if (firstSeen.Count > 500) firstSeen.Clear();
-            foreach (Unit unit in UnitRegistry.allUnits)
+            foreach (Missile missile in MissileIndex.At(target))
             {
-                if (!(unit is Missile missile) || missile.disabled || missile.NetworkHQ != hq || missile.targetID != target.persistentID) continue;
+                if (missile == null || missile.disabled || missile.NetworkHQ != hq || missile.targetID != target.persistentID) continue;
                 // Only what aircraft have fired: a ship's SAM or a ground
                 // launcher's shot is a separate layer, often decoyed or shot
                 // down, and counting it grounded a wing -- one Scythe and one

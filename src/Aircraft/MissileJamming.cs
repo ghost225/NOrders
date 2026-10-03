@@ -140,9 +140,9 @@ namespace NOrders
                     if (aircraft == null || aircraft.disabled || flight.Interrupted || Host.IsFlownByPlayer(flight)) continue;
                     if (!ecm.TryGetValue(aircraft, out RadarJammer[] jammers)) ecm[aircraft] = jammers = aircraft.GetComponentsInChildren<RadarJammer>(true);
                     if (jammers.Length == 0) continue;
-                    foreach (Unit unit in UnitRegistry.allUnits)
+                    foreach (Missile missile in MissileIndex.At(aircraft))
                     {
-                        if (!(unit is Missile missile) || missile.disabled || missile.targetID != aircraft.persistentID) continue;
+                        if (missile == null || missile.disabled || missile.targetID != aircraft.persistentID) continue;
                         string seeker = missile.GetSeekerType();
                         if (seeker != "ARH" && seeker != "SARH") continue;
                         if (Vector3.Distance(missile.transform.position, aircraft.transform.position) > EcmFrom) continue;
@@ -246,9 +246,9 @@ namespace NOrders
             float reach = station?.WeaponInfo != null && station.WeaponInfo.targetRequirements.maxRange > 0f
                 ? station.WeaponInfo.targetRequirements.maxRange : 20000f;
             FactionHQ hq = aircraft.NetworkHQ;
-            foreach (Unit unit in UnitRegistry.allUnits)
+            foreach (Missile missile in MissileIndex.At(aircraft))
             {
-                if (!(unit is Missile missile) || missile.disabled || missile.targetID != aircraft.persistentID) continue;
+                if (missile == null || missile.disabled || missile.targetID != aircraft.persistentID) continue;
                 if (missile.NetworkHQ == null || missile.NetworkHQ == hq) continue;
                 string seeker = missile.GetSeekerType();
                 if (seeker != "ARH" && seeker != "SARH") continue;

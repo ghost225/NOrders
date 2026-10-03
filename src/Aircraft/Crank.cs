@@ -32,9 +32,9 @@ namespace NOrders
             targets?.Clear();
             if (aircraft == null) return 0;
             int count = 0;
-            foreach (Unit unit in UnitRegistry.allUnits)
+            foreach (Missile missile in MissileIndex.From(aircraft))
             {
-                if (!(unit is Missile missile) || missile.disabled || missile.owner != aircraft) continue;
+                if (missile == null || missile.disabled || missile.owner != aircraft) continue;
                 string seeker;
                 try { seeker = missile.GetSeekerType(); } catch { continue; }
                 bool needs = seeker == "SARH" || (seeker == "ARH" && missile.seekerMode != Missile.SeekerMode.activeLock);

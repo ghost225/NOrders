@@ -222,9 +222,9 @@ namespace NOrders
         {
             inbound.Clear();
             attackers.Clear();
-            foreach (Unit unit in UnitRegistry.allUnits)
+            foreach (Missile missile in MissileIndex.All)
             {
-                if (!(unit is Missile missile) || missile.disabled) continue;
+                if (missile == null || missile.disabled) continue;
                 if (missile.NetworkHQ == null || missile.NetworkHQ == ship.NetworkHQ) continue;
                 if (missile.targetID != ship.persistentID) continue;
                 inbound.Add(missile);

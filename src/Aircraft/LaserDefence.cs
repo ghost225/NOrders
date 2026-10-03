@@ -107,9 +107,9 @@ namespace NOrders
             FactionHQ hq = aircraft.NetworkHQ;
             Missile best = null;
             float soonest = float.MaxValue;
-            foreach (Unit unit in UnitRegistry.allUnits)
+            foreach (Missile missile in MissileIndex.All)
             {
-                if (!(unit is Missile missile) || missile.disabled || missile.NetworkHQ == null || missile.NetworkHQ == hq) continue;
+                if (missile == null || missile.disabled || missile.NetworkHQ == null || missile.NetworkHQ == hq) continue;
                 if (taken.Contains(missile) && missile != held) continue;
                 if (!UnitRegistry.TryGetUnit(missile.targetID, out Unit aimedAt) || aimedAt == null || aimedAt.NetworkHQ != hq) continue;
                 if (aimedAt != aircraft && Vector3.Distance(aimedAt.transform.position, aircraft.transform.position) > GuardRadius) continue;

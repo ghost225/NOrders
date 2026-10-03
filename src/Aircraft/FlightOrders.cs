@@ -1872,41 +1872,43 @@ namespace NOrders
                 bool infrared = false;
                 Missile nearestMissile = null, nearestHeatMissile = null;
 
-                foreach (Unit unit in UnitRegistry.allUnits)
+                // Anything already in the air at us outranks every order.
+                foreach (Missile missile in MissileIndex.At(aircraft))
                 {
-                    if (unit == null || unit.disabled || unit.NetworkHQ == null) continue;
-                    if (unit.NetworkHQ == aircraft.NetworkHQ) continue;
-
-                    // Anything already in the air at us outranks every order.
-                    if (unit is Missile missile)
-                    {
-                        if (missile.targetID != aircraft.persistentID) continue;
-                        threat = FlightThreat.Missile;
-                        if (missile.owner is Aircraft shooter && !shooter.disabled) flight.Attackers[shooter] = Time.timeSinceLevelLoad;
-                        float shotRange = FastMath.Distance(aircraft.GlobalPosition(), missile.GlobalPosition());
-                        if (shotRange < nearestShot) { nearestShot = shotRange; nearestMissile = missile; }
-                        // A heat-seeker, by the game's own reading of the seeker
-                        // (the same string its countermeasure stations match
-                        // on): a component check alone read every shot as
-                        // radar, and an F-16 burned at full power with its
-                        // flares untouched.
-                        if (IsHeatSeeker(missile) && shotRange < nearestHeat) { nearestHeat = shotRange; nearestHeatMissile = missile; }
-                        continue;
-                    }
-                    if (threat != FlightThreat.None) continue;
-                    if (flight.Roe != FlightRoe.Free) continue;
-                    // Weapons free inside the task area: something we can reach
-                    // and hurt, that is also somewhere we were sent to fight.
-                    Flight area = flight.Mode == FlightMode.Formation ? Wings.LeadOf(flight) : flight;
-                    if (HasArea(area) &&
-                        FastMath.Distance(unit.GlobalPosition(), AreaCentre(area)) > area.OrbitRadius) continue;
-                    WeaponStation station = BestStationFor(aircraft, unit, allowGun: true);
-                    if (station == null) continue;
-                    float range = FastMath.Distance(aircraft.GlobalPosition(), unit.GlobalPosition());
-                    if (range > station.WeaponInfo.targetRequirements.maxRange) continue;
-                    if (Host.AvoidEngaging(flight, unit)) continue;      // under their missiles: not worth it
-                    threat = FlightThreat.Hostile;
+                    if (missile == null || missile.disabled || missile.NetworkHQ == null || missile.NetworkHQ == aircraft.NetworkHQ) continue;
+                    if (missile.targetID != aircraft.persistentID) continue;
+                    threat = FlightThreat.Missile;
+                    if (missile.owner is Aircraft shooter && !shooter.disabled) flight.Attackers[shooter] = Time.timeSinceLevelLoad;
+                    float shotRange = FastMath.Distance(aircraft.GlobalPosition(), missile.GlobalPosition());
+                    if (shotRange < nearestShot) { nearestShot = shotRange; nearestMissile = missile; }
+                    // A heat-seeker, by the game's own reading of the seeker
+                    // (the same string its countermeasure stations match
+                    // on): a component check alone read every shot as
+                    // radar, and an F-16 burned at full power with its
+                    // flares untouched.
+                    if (IsHeatSeeker(missile) && shotRange < nearestHeat) { nearestHeat = shotRange; nearestHeatMissile = missile; }
                 }
+
+                // Weapons free, and nothing at us: the full sweep for something
+                // to fight is only made then.
+                if (threat == FlightThreat.None && flight.Roe == FlightRoe.Free)
+                    foreach (Unit unit in UnitRegistry.allUnits)
+                    {
+                        if (unit == null || unit.disabled || unit.NetworkHQ == null || unit is Missile) continue;
+                        if (unit.NetworkHQ == aircraft.NetworkHQ) continue;
+                        // Inside the task area: something we can reach and
+                        // hurt, that is also somewhere we were sent to fight.
+                        Flight area = flight.Mode == FlightMode.Formation ? Wings.LeadOf(flight) : flight;
+                        if (HasArea(area) &&
+                            FastMath.Distance(unit.GlobalPosition(), AreaCentre(area)) > area.OrbitRadius) continue;
+                        WeaponStation station = BestStationFor(aircraft, unit, allowGun: true);
+                        if (station == null) continue;
+                        float range = FastMath.Distance(aircraft.GlobalPosition(), unit.GlobalPosition());
+                        if (range > station.WeaponInfo.targetRequirements.maxRange) continue;
+                        if (Host.AvoidEngaging(flight, unit)) continue;      // under their missiles: not worth it
+                        threat = FlightThreat.Hostile;
+                        break;
+                    }
 
                 // With shots of both kinds inbound the heat-seeker sets the
                 // defence once it is within twice the flaring range: flares and
@@ -1993,9 +1995,9 @@ namespace NOrders
                 ? pods[0].Station.WeaponInfo.targetRequirements.maxRange : 20000f;
             FactionHQ hq = aircraft.NetworkHQ;
             int radarInReach = 0, radarFar = 0, heat = 0;
-            foreach (Unit unit in UnitRegistry.allUnits)
+            foreach (Missile missile in MissileIndex.At(aircraft))
             {
-                if (!(unit is Missile missile) || missile.disabled || missile.targetID != aircraft.persistentID) continue;
+                if (missile == null || missile.disabled || missile.targetID != aircraft.persistentID) continue;
                 float range = Vector3.Distance(missile.transform.position, aircraft.transform.position);
                 if (IsHeatSeeker(missile))
                 {
