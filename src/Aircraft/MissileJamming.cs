@@ -122,6 +122,7 @@ namespace NOrders
         // missile is coming at one of our flights we are flying ourselves.
         private static readonly Dictionary<Aircraft, RadarJammer[]> ecm = new Dictionary<Aircraft, RadarJammer[]>();
         private static readonly HashSet<Aircraft> underThreat = new HashSet<Aircraft>();
+        private static readonly HashSet<Aircraft> ecmOn = new HashSet<Aircraft>();   // for the log: once per spell
         // A radar seeker is kept from re-acquiring by ECM only inside 5 km
         // (ARHSeeker: no return, under 5 km, intensity over 2), and the
         // jammer draws its power store down -- weaker as the charge falls. On
@@ -146,9 +147,13 @@ namespace NOrders
                         if (seeker != "ARH" && seeker != "SARH") continue;
                         if (Vector3.Distance(missile.transform.position, aircraft.transform.position) > EcmFrom) continue;
                         underThreat.Add(aircraft);
+                        if (ecmOn.Add(aircraft))
+                            Host.LogInfo("[flight] " + flight.Name + " · ECM on · " + jammers.Length + " jammer(s) against " +
+                                (missile.GetWeaponInfo()?.weaponName ?? "a radar missile") + " (" + seeker + ") inside " + (EcmFrom / 1000f).ToString("0") + " km");
                         break;
                     }
                 }
+                ecmOn.RemoveWhere(a => a == null || !underThreat.Contains(a));
                 var gone = new List<Aircraft>();
                 foreach (Aircraft aircraft in ecm.Keys) if (aircraft == null || aircraft.disabled) gone.Add(aircraft);
                 foreach (Aircraft aircraft in gone) ecm.Remove(aircraft);
