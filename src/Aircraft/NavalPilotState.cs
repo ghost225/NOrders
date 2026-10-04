@@ -1679,7 +1679,12 @@ namespace NOrders
             Vector3 side = miss - track * along;
             float across = side.magnitude;
 
-            flight.Doing("BOMB RUN · " + UnitConverter.DistanceReading(Horizontal(known, here)));
+            // A bomb steers onto its target only if it is released with one
+            // -- a lock -- and the seeker starts from the faction's known
+            // position: released on a stale track it falls on the old spot.
+            // The game's own AI will not bomb without a track good to 50 m.
+            bool locked = FlightOrders.CanReleaseNow(aircraft, info, target);
+            flight.Doing("BOMB RUN · " + UnitConverter.DistanceReading(Horizontal(known, here)) + (locked ? "" : " · NO LOCK"));
             // Steer the fall onto the target rather than the nose: aim off by
             // however far to the side the bombs would land.
             float ordered = flight.Altitude;
@@ -1692,10 +1697,20 @@ namespace NOrders
                 flight.BombRun = false;
                 if (flight.BombsThisPass > 0) { CompleteRunIn(pilot, flight.BombsThisPass + " bomb(s) away"); return; }
                 flight.SettingUp = true;
+                flight.NotedNoLock = false;
                 Tracing.Flight("[flight] " + flight.Name + " · bomb run overshot (" + across.ToString("0") + " m off the line) · coming round");
                 return;
             }
             if (along < -BombLead || across > BombCross || Time.timeSinceLevelLoad - flight.LastLaunchAt < BombInterval) return;
+            if (!locked)
+            {
+                if (!flight.NotedNoLock)
+                {
+                    flight.NotedNoLock = true;
+                    Tracing.Flight("[flight] " + flight.Name + " · at the release point without a track good to 50 m · holding the bombs");
+                }
+                return;
+            }
 
             if (flight.BombsThisPass == 0)
                 flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
@@ -1714,7 +1729,7 @@ namespace NOrders
                 if (flight.BombsThisPass == 1)
                     Tracing.Flight("[flight] " + flight.Name + " · bombs away · " + (info.weaponName ?? "bomb") + " from " +
                         aircraft.radarAlt.ToString("0") + " m at " + aircraft.speed.ToString("0") + " m/s · predicted " +
-                        along.ToString("0") + " m along, " + across.ToString("0") + " m across");
+                        along.ToString("0") + " m along, " + across.ToString("0") + " m across · locked on " + ShipNames.Of(target));
             }
             if (station.Ammo <= 0 || flight.SalvoLeft <= 0)
             {

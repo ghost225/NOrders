@@ -52,6 +52,7 @@ namespace NOrders
         public bool SettingUp;              // opening out toward friendly lines to come round for the run
         public bool BombRun;                // lined up with unguided bombs: our own release, not the combat pilot's
         public int BombsThisPass;
+        public bool NotedNoLock;
         public int StrikeStartAmmo = -1;
         public FlightMode PreviousMode = FlightMode.Orbit;
         public FlightRoe Roe = FlightRoe.Tight;
