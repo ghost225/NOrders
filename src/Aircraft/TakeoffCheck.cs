@@ -263,7 +263,7 @@ namespace NOrders
             return mass;
         }
 
-        private static float MaxThrust(Aircraft prefab)
+        internal static float MaxThrust(Aircraft prefab)
         {
             var ducted = prefab.GetComponent<DuctedThrustSystem>();
             if (ducted != null) return ducted.GetMaxThrust();

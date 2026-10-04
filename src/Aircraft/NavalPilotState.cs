@@ -1254,13 +1254,32 @@ namespace NOrders
         // out of a 6,000 m orbit at full power and go in without the energy
         // recovery ever firing: their wing-borne stall is three times that.
         // Zero for such a type, and for any whose takeoff speed is under 40%
-        // of its corner speed; the corner and top speeds set the bar then.
+        // of its corner speed and whose thrust can carry most of its weight;
+        // the corner and top speeds set the bar then. A short-field type
+        // that cannot hold itself up on thrust (the T/A-30 Compass, T/W
+        // about 0.7) takes off on its wing: read off its corner speed
+        // instead, its stall came out near 72 m/s and it was held to 30
+        // degrees of bank at its normal 115 m/s -- turning very slowly.
         private float WingBorneTakeoff()
         {
             if (parameters == null || parameters.takeoffSpeed <= 0f) return 0f;
             if (parameters.verticalLanding) return 0f;
-            if (parameters.cornerSpeed > 0f && parameters.takeoffSpeed < parameters.cornerSpeed * 0.4f) return 0f;
+            if (parameters.cornerSpeed > 0f && parameters.takeoffSpeed < parameters.cornerSpeed * 0.4f && ThrustBorne()) return 0f;
             return parameters.takeoffSpeed;
+        }
+
+        private float thrustToWeight = -1f;
+        private bool ThrustBorne()
+        {
+            if (thrustToWeight < 0f)
+            {
+                float thrust = 0f;
+                try { thrust = TakeoffCheck.MaxThrust(aircraft); } catch { }
+                float weight = aircraft.rb != null ? aircraft.rb.mass * 9.81f : 0f;
+                // Unknown thrust: assume it might, the cautious answer.
+                thrustToWeight = thrust > 0f && weight > 0f ? thrust / weight : 1f;
+            }
+            return thrustToWeight >= 0.9f;
         }
 
         internal static bool CanBeFlown(Aircraft aircraft) =>
