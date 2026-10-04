@@ -1643,9 +1643,11 @@ namespace NOrders
         // bombs released, a short stick, as that impact point reaches the
         // target. Bombs steer a little in the last of their fall, so close is
         // close enough. Overflown with nothing away, it comes round again.
-        private const float BombLead = 60f;         // release this far short, so a stick straddles it
-        private const float BombWindow = 200f;      // and still this far past
-        private const float BombCross = 150f;       // off to the side, at most
+        // Released while the predicted impact is within 100 m of the target:
+        // the bombs' own guidance makes up the rest.
+        private const float BombMiss = 100f;
+        private const float BombLead = BombMiss;    // from this far short
+        private const float BombWindow = BombMiss;  // to this far past
         private const float BombInterval = 0.25f;
 
         // The run in for unguided bombs: no descent -- a bomb's fall is
@@ -1743,7 +1745,7 @@ namespace NOrders
                 Tracing.Flight("[flight] " + flight.Name + " · bomb run overshot (" + across.ToString("0") + " m off the line) · coming round");
                 return;
             }
-            if (along < -BombLead || across > BombCross || Time.timeSinceLevelLoad - flight.LastLaunchAt < BombInterval) return;
+            if (along < -BombLead || miss.magnitude > BombMiss || Time.timeSinceLevelLoad - flight.LastLaunchAt < BombInterval) return;
             if (!locked)
             {
                 if (!flight.NotedNoLock)
