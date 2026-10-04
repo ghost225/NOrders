@@ -117,6 +117,11 @@ namespace NOrders
         // Whether the game's combat pilot takes this shot (with our guardrails)
         // rather than our own state: per seeker, by setting.
         public bool NativeEvades => Threat == FlightThreat.Missile && (ThreatIsInfrared ? !Tuning.OwnIrEvasion : !Tuning.OwnRadarEvasion);
+        // On an attack it was ordered to make -- a strike (the planner's or a
+        // single target) or an engage order -- a heat-seeker is flared off
+        // without leaving the attack: idle and flare strings, no beam turn.
+        // Breaking away throws the attack away. Anywhere else it is beamed.
+        public bool HoldsAttackOnHeat => Mode == FlightMode.Strike || Mode == FlightMode.Engage;
         // A radar shot inbound and our state keeping the aircraft: beam, chaff, descend.
         public bool EvadingRadar => !StandOn && Tuning.OwnRadarEvasion && Threat == FlightThreat.Missile && !ThreatIsInfrared && ThreatMissile != null && !ThreatMissile.disabled;
         public float NextFlare;

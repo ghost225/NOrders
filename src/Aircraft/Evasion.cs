@@ -103,7 +103,9 @@ namespace NOrders
     // And the throttle comes off whether or not the game has noticed the shot
     // (a heat-seeker often gives no warning), which its own evasion never
     // would. Everything else -- height, the fight it was in, the end of it --
-    // is the game's, under the G, speed, airbrake and ground guards.
+    // is the game's, under the G, speed, airbrake and ground guards. On an
+    // ordered attack (strike or engage) there is no turn: the attack is held
+    // and the flares do the work, as before the handover.
     [HarmonyPatch(typeof(AIPilotCombatModes), "RunEvadeMode")]
     internal static class NativeIrBeamPatch
     {
@@ -130,6 +132,19 @@ namespace NOrders
                 {
                     inputs.throttle = IrDefence.EvasionThrottle(aircraft);
                     AuxAxis.Apply(aircraft, inputs);
+                }
+
+                // An ordered attack is held: the game's evasion already keeps
+                // its destination on the attack, so it is left there.
+                if (flight.HoldsAttackOnHeat)
+                {
+                    if (noted.Add(missile))
+                    {
+                        if (noted.Count > 200) noted.Clear();
+                        Tracing.Flight("[flight] " + flight.Name + " · heat-seeker at " + UnitConverter.DistanceReading(flight.ThreatRange) +
+                            " · holding the attack, idle, our flares");
+                    }
+                    return;
                 }
 
                 Vector3 toMissile = missile.transform.position - aircraft.transform.position;
