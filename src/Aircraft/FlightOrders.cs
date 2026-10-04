@@ -1791,14 +1791,17 @@ namespace NOrders
             return true;
         }
 
-        // The best store aboard for the target. Guns only when allowed: a
-        // flight is not sent at a target with nothing but its gun unless the
-        // gun was chosen for it -- a wingman with no air-to-air missiles went
-        // after an aircraft on the strength of its cannon. A gun picked by
-        // name (NamedStation) is always honoured; weapons free may use one.
+        // The best store aboard for the target. Against something on the
+        // ground or at sea a gun is the last choice but a valid one: a
+        // Vagrant with a 20 mm and nothing else could not be sent at a
+        // revetment from the map, the strike planner or the contact's menu.
+        // Against an aircraft only when allowed: a wingman with no air-to-air
+        // missiles went after one on the strength of its cannon. A gun picked
+        // by name (NamedStation) is always honoured; weapons free may use one.
         internal static WeaponStation BestStationFor(Aircraft aircraft, Unit target, bool allowGun = false)
         {
             if (aircraft == null || target == null || aircraft.weaponStations == null) return null;
+            if (!IsAirTarget(target)) allowGun = true;
             WeaponStation best = null, gun = null;
             float bestScore = 0.01f;
             foreach (WeaponStation station in aircraft.weaponStations)
