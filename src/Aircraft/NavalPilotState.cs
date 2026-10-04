@@ -41,6 +41,20 @@ namespace NOrders
             controlInputs = aircraft.GetInputs();
             parameters = aircraft.GetAircraftParameters();
             FindNearestAirbase();
+            // Nothing left firing from the combat pilot's attack. A ripple
+            // (WeaponManager.SalvoFire) walks the live target list after the
+            // state has moved on: Mallet, a Vagrant, pulled off after its
+            // four rockets and went back on station still putting the rest of
+            // the pod into the list. Cleared, the ripple ends.
+            try
+            {
+                if (aircraft.weaponManager != null && aircraft.weaponManager.GetTargetList().Count > 0)
+                {
+                    aircraft.weaponManager.GetTargetList().Clear();
+                    aircraft.weaponManager.TargetListChanged();
+                }
+            }
+            catch { }
 
             // The same handover the native combat state performs. Without it a
             // helicopter arrives from its takeoff state with auto-hover still
@@ -1006,7 +1020,7 @@ namespace NOrders
                     // strike speeds every line-up was flown flat on the
                     // rudder. The G limit (GLimitPatch) keeps the bank honest.
                     else if (parameters != null && aircraft.speed >= parameters.cornerSpeed)
-                        lateral = Mathf.Max(lateral, BankingTurn);
+                        lateral = Mathf.Max(lateral, flight.Mode == FlightMode.Strike ? StrikeTurn : BankingTurn);
                     if (track.sqrMagnitude > 1f && toward.sqrMagnitude > 1f && Vector3.Angle(track, toward) > lateral)
                     {
                         float side = Mathf.Sign(Vector3.SignedAngle(track, toward, Vector3.up));
@@ -1726,6 +1740,9 @@ namespace NOrders
             Steer(aim);
         }
         private const float ShallowDive = 15f;      // degrees down to the target the combat pilot is handed a run at: inside its 20-degree attack cone
+        // On a strike, firmer still: at 25 degrees a Vagrant run-in circled
+        // the target at 7.5 km for a minute before coming round.
+        private const float StrikeTurn = 50f;
         private const float BankingTurn = 25f;      // degrees off asked for, at the least: past the autopilot's 20-degree yaw zone
         private const float BombLine = 8f;          // degrees off the target's bearing that counts as on the line
 
