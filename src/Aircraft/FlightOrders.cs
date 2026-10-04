@@ -349,6 +349,13 @@ namespace NOrders
         // Whatever the standing task is, what it is doing right now comes first.
         // What it is doing this moment, ahead of its standing task: shot at,
         // fighting back and at what, the stage of an attack, forming up.
+        // The combat pilot has a gun pass: its own, with nothing of ours on it.
+        private bool GunRun()
+        {
+            WeaponStation current = Aircraft != null && Aircraft.weaponManager != null ? Aircraft.weaponManager.currentWeaponStation : null;
+            return current?.WeaponInfo != null && current.WeaponInfo.gun;
+        }
+
         public string Status
         {
             get
@@ -358,7 +365,8 @@ namespace NOrders
                 if (Interrupted)
                     return fighting == null ? "ENGAGING"
                         : (Attackers.ContainsKey(fighting) ? "ATTACKING ATTACKER · " : "ENGAGING · ") + ShipNames.Of(fighting);
-                if (Mode == FlightMode.Strike && RunInDone && fighting != null) return "ATTACKING · " + ShipNames.Of(fighting) + ListProgress();
+                if (Mode == FlightMode.Strike && RunInDone && fighting != null)
+                    return (GunRun() ? "NATIVE AI GUN RUN · " : "ATTACKING · ") + ShipNames.Of(fighting) + ListProgress();
                 if (activity != null && Time.timeSinceLevelLoad < activityUntil) return activity + (Mode == FlightMode.Strike ? ListProgress() : "");
                 if (Mode == FlightMode.Egress) return (Cranking ? "CRANKING" : "EGRESSING") + ListProgress();
                 if (Mode == FlightMode.Orbit && StrikeList.Count > 0) return "HOLDING · missiles on the way" + ListProgress();
@@ -1764,11 +1772,10 @@ namespace NOrders
             straight = false;
             if (info == null) return false;
             float reach = info.targetRequirements.maxRange;
-            // A gun pass: brought down to strafing height a few kilometres
-            // out at strafing speed, then the combat pilot's, under our
-            // guardrails (strafing speed, held pull-outs: NativeSpeedLimitPatch).
-            // Handed over at 3,200 m it holds about that height and flies
-            // over the target; delivered at 334 m/s an F-99 went in.
+            // A gun pass: flown to standoff distance (heading down toward
+            // strafing height), then handed to the combat pilot at that range
+            // whatever the height, as NATIVE AI GUN RUN: its own pass, no
+            // speed or height limits of ours on it.
             if (info.gun)
             {
                 height = 800f;

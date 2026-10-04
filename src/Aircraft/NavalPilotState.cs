@@ -1396,6 +1396,9 @@ namespace NOrders
 
             GlobalPosition here = aircraft.GlobalPosition();
             float range = Horizontal(known, here);
+            // A gun run: ours only as far as standoff distance, then the
+            // game's combat pilot flies the pass its own way.
+            if (weapon != null && weapon.gun && range < release) { CompleteRunIn(pilot, "native AI gun run"); return; }
             // Low enough, or simply looking down at the target at no more
             // than a shallow dive: the combat pilot shoots from there. Held
             // to the weapon's set height (300 m for rockets), a King Viper
@@ -1450,7 +1453,6 @@ namespace NOrders
             flight.Altitude = height;
             Steer(aim);
             flight.Altitude = ordered;
-            if (weapon != null && weapon.gun) { NativeSpeedLimitPatch.HoldGunSpeed(aircraft, controlInputs); IntendedThrottle = controlInputs.throttle; }
         }
 
         // A missile strike with nothing shooting at us: fly at the ordered
