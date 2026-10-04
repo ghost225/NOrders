@@ -888,7 +888,7 @@ namespace NOrders
                     int now = TotalAmmo(flight.Aircraft);
                     // On a strike list, the other weapons' targets reachable
                     // from here go on the same pass before it turns away.
-                    if (now >= 0 && now < flight.AmmoAtAttack && !StrikePlans.FollowUp(flight)) Egress(flight);
+                    if (now >= 0 && now < flight.AmmoAtAttack && !StillDelivering(flight) && !StrikePlans.FollowUp(flight)) Egress(flight);
                 }
 
                 if (flight.Mode == FlightMode.Egress && flight.Cranking)
@@ -1802,7 +1802,7 @@ namespace NOrders
         {
             if (aircraft == null || target == null || aircraft.weaponStations == null) return null;
             if (!IsAirTarget(target)) allowGun = true;
-            WeaponStation best = null, gun = null;
+            WeaponStation best = null, gun = null, fallback = null;
             float bestScore = 0.01f;
             foreach (WeaponStation station in aircraft.weaponStations)
             {
@@ -1814,13 +1814,57 @@ namespace NOrders
                 }
 
                 float score = WeaponOrders.Opportunity(station.WeaponInfo, target);
+                // Laser-guided with nothing to lase the target: last but one,
+                // ahead of only the gun. A Compass with no pod kept sending
+                // Lynchpins, which flew on unguided, and never its bomb.
+                if (station.WeaponInfo.laserGuided && !CanLase(aircraft, target)) { if (fallback == null) fallback = station; continue; }
                 if (score <= bestScore) continue;
                 bestScore = score;
                 best = station;
             }
             if (best != null && IsAirTarget(target)) best = ByReach(aircraft, target, best, bestScore) ?? best;
-            return best ?? gun;
+            return best ?? fallback ?? gun;
         }
+
+        // Not yet away from the attack: a ripple still going out, or one of
+        // our laser-guided rounds still flying. The jet's designator lases
+        // whatever is on its target list, in range and in sight; taken back
+        // the moment the first round left, the list was cleared and the
+        // aircraft turned for home, and a Compass's Lynchpins flew on blind.
+        // The combat pilot keeps it meanwhile (it holds the attack while its
+        // laser rounds fly).
+        private static readonly HashSet<Aircraft> notedDelivering = new HashSet<Aircraft>();
+        internal static bool StillDelivering(Flight flight)
+        {
+            Aircraft aircraft = flight?.Aircraft;
+            if (aircraft == null || aircraft.weaponStations == null) return false;
+            bool salvo = false, lased = false;
+            foreach (WeaponStation station in aircraft.weaponStations)
+                if (station != null && station.SalvoInProgress) { salvo = true; break; }
+            if (!salvo)
+                foreach (Missile missile in MissileIndex.From(aircraft))
+                {
+                    if (missile == null || missile.disabled) continue;
+                    WeaponInfo info = null;
+                    try { info = missile.GetWeaponInfo(); } catch { }
+                    if (info != null && info.laserGuided) { lased = true; break; }
+                }
+            if (!salvo && !lased) { notedDelivering.Remove(aircraft); return false; }
+            if (notedDelivering.Add(aircraft))
+            {
+                if (notedDelivering.Count > 200) notedDelivering.Clear();
+                Tracing.Flight("[flight] " + flight.Name + " · " + (salvo ? "salvo still going out" : "laser-guided rounds in flight") +
+                    " · holding the attack · designator " + (aircraft.GetLaserDesignator() != null ? "aboard" : "none aboard") +
+                    (flight.Target != null && aircraft.NetworkHQ != null ? " · target " + (aircraft.NetworkHQ.IsTargetLased(flight.Target) ? "lased" : "NOT lased") : ""));
+            }
+            return true;
+        }
+
+        // A laser-guided weapon is any use only with a spot on the target:
+        // this aircraft's own designator, or someone already lasing it.
+        internal static bool CanLase(Aircraft aircraft, Unit target) =>
+            aircraft != null && (aircraft.GetLaserDesignator() != null ||
+                (target != null && aircraft.NetworkHQ != null && aircraft.NetworkHQ.IsTargetLased(target)));
 
         // Against an aircraft the game's own effectiveness score is not the
         // whole answer: it rates a heat-seeker over a radar missile against a
