@@ -1396,19 +1396,10 @@ namespace NOrders
 
             GlobalPosition here = aircraft.GlobalPosition();
             float range = Horizontal(known, here);
-            // A gun run: the game's combat pilot's the moment the jet is
-            // pointed at the target (inside its own 20-degree attack cone),
-            // at any range -- as a landing is handed over. Until then our
-            // state only turns it toward the target.
-            if (weapon != null && weapon.gun)
-            {
-                Vector3 gunTrack = Flat(aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward);
-                Vector3 gunTo = known - here; gunTo.y = 0f;
-                if (gunTo.sqrMagnitude < 1f || Vector3.Angle(gunTrack, gunTo) <= GunHandoverCone) { CompleteRunIn(pilot, "native AI gun run"); return; }
-                flight.Doing("TURNING IN FOR THE GUN RUN · " + UnitConverter.DistanceReading(range));
-                Steer(known);
-                return;
-            }
+            // A gun run: ours, start to finish (FlyGunRun). Handed to the game's
+            // combat pilot it flew straight and level at the target, then
+            // nosedived or circled, and never lined up.
+            if (weapon != null && weapon.gun) { FlyGunRun(pilot, target, known, station); return; }
             // Low enough, or simply looking down at the target at no more
             // than a shallow dive: the combat pilot shoots from there. Held
             // to the weapon's set height (300 m for rockets), a King Viper
@@ -2069,7 +2060,9 @@ namespace NOrders
             // The spot on ahead of the shot: the target on the list once the
             // round could nearly reach it.
             List<Unit> targets = aircraft.weaponManager.GetTargetList();
-            if (dist < laserMax * 1.5f && (targets.Count != 1 || targets[0] != target))
+            // (Not mid-ripple: the ripple walks this same list, and trimming
+            // it to one entry ends the salvo.)
+            if (dist < laserMax * 1.5f && !station.SalvoInProgress && (targets.Count != 1 || targets[0] != target))
             {
                 targets.Clear();
                 targets.Add(target);
@@ -2184,18 +2177,161 @@ namespace NOrders
             if (flight.SalvoLeft <= 0)
                 flight.SalvoLeft = saturation != null ? Mathf.Max(StrikePlans.SaturationRounds(aircraft, saturation), 1)
                     : Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(KindAmmo(station), 1));
+            // The salvo as one ripple, the game's own (WeaponManager.SalvoFire):
+            // the target listed once a round, from this station. Fired a round
+            // at a time against the ring, a jet still settling on the line
+            // wobbled out of it between rounds and the salvo straggled.
             aircraft.weaponManager.currentWeaponStation = station;
+            int rounds = Mathf.Clamp(flight.SalvoLeft, 1, Mathf.Max(station.Ammo, 1));
+            targets.Clear();
+            for (int r = 0; r < rounds; r++) targets.Add(target);
+            aircraft.weaponManager.TargetListChanged();
             int before = station.Ammo;
             pilot.Fire();
             flight.LastLaunchAt = now;
             if (station.Ammo < before)
             {
-                flight.SalvoLeft--;
-                Tracing.Flight("[flight] " + flight.Name + " · launched " + info.weaponName + " at " + UnitConverter.DistanceReading(dist) +
+                int sent = station.SalvoInProgress ? rounds : 1;
+                flight.SalvoLeft -= sent;
+                Tracing.Flight("[flight] " + flight.Name + " · " + (sent > 1 ? "rippled " + sent + " × " : "launched ") + info.weaponName + " at " + UnitConverter.DistanceReading(dist) +
                     " (max " + UnitConverter.DistanceReading(laserMax) + "), " + off.ToString("0.0") + "° off in a " + ring.ToString("0.0") + "° ring, lased · " +
                     Mathf.Max(flight.SalvoLeft, 0) + " left");
             }
             if (KindAmmo(station) <= 0) flight.SalvoLeft = 0;
+        }
+
+        // A strafing run, flown by us. Down to run height out at the entry
+        // range; turned onto the target there (too tight a turn: open out
+        // and come round); a shallow dive eased in on the gun's own aim
+        // point -- the cockpit solution, lead and drop (ControlsFilter.GetAim);
+        // the gun fired while that point sits on the boresight inside the
+        // gun's range, to the game AI's own strafing tolerance; off at
+        // 500 m or 150 m over the ground, open out, climb, and again, up to
+        // GunPasses. Power held to strafing speed. The pass count keeps the
+        // usual "rounds away, egress" from ending it after the first burst.
+        private float gunRunFor = -1f;
+        private int gunPasses;
+        private bool gunOpening, gunDiving, gunFiredThisPass, gunFiredAtAll;
+        private float gunDive, gunHoldSaidAt = -10f;
+        private const int GunPasses = 4;
+        private const float GunRunHeight = 700f, GunFloor = 150f, GunBreakRange = 500f, GunStrafeSpeed = 240f;
+
+        private void FlyGunRun(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station)
+        {
+            WeaponInfo info = station.WeaponInfo;
+            float now = Time.timeSinceLevelLoad;
+            if (gunRunFor != flight.RunInStarted)
+            {
+                gunRunFor = flight.RunInStarted;
+                gunPasses = 0; gunOpening = false; gunDiving = false; gunFiredThisPass = false; gunFiredAtAll = false;
+            }
+            if (KindAmmo(station) <= 0 || gunPasses >= GunPasses)
+            {
+                Tracing.Flight("[flight] " + flight.Name + " · gun run over · " + gunPasses + " pass(es)" + (gunFiredAtAll ? "" : ", no shot"));
+                if (gunFiredAtAll) { flight.SalvoLeft = 0; flight.Doing("GUN RUN OVER"); Steer(aircraft.GlobalPosition() + Flat(aircraft.transform.forward) * 5000f); }
+                else CompleteRunIn(pilot, "gun run: no shot in " + gunPasses + " passes");
+                return;
+            }
+            flight.SalvoLeft = 1;           // a pass at a time: not over until the passes are
+
+            GlobalPosition here = aircraft.GlobalPosition();
+            Vector3 flatTo = known - here; flatTo.y = 0f;
+            float horizontal = flatTo.magnitude;
+            float dist = FastMath.Distance(known, here);
+            float maxRange = info.targetRequirements.maxRange > 0f ? info.targetRequirements.maxRange : 1500f;
+            float entry = Mathf.Max(maxRange * 2.5f, 3500f);
+            float ordered = flight.Altitude;
+
+            // Strafing speed, not a supersonic dive.
+            float corner = parameters != null ? parameters.cornerSpeed : 0f;
+            float strafe = Mathf.Max(GunStrafeSpeed, corner * 1.2f);
+
+            if (gunOpening)
+            {
+                if (horizontal >= entry * 0.9f && aircraft.radarAlt >= GunRunHeight * 0.8f) { gunOpening = false; gunDiving = false; }
+                else
+                {
+                    flight.Doing("GUN RUN · OPENING OUT · pass " + (gunPasses + 1) + " of " + GunPasses);
+                    flight.Altitude = GunRunHeight;
+                    Steer(here + Flat(here - known) * 5000f);
+                    flight.Altitude = ordered;
+                    return;
+                }
+            }
+
+            Vector3 track = Flat(aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward);
+            float lateral = horizontal > 1f ? Vector3.Angle(track, flatTo) : 0f;
+            if (horizontal > entry)
+            {
+                gunDiving = false;
+                flight.Doing("GUN RUN · LINING UP · " + UnitConverter.DistanceReading(horizontal));
+                flight.Altitude = GunRunHeight;
+                Steer(known);
+                flight.Altitude = ordered;
+                if (aircraft.speed > strafe && controlInputs != null) controlInputs.throttle = Mathf.Min(controlInputs.throttle, 0.4f);
+                return;
+            }
+            // Inside the entry range and not lined up: the turn would be too
+            // tight to settle. Round again.
+            if (!gunDiving && lateral > 25f)
+            {
+                gunOpening = true;
+                Tracing.Flight("[flight] " + flight.Name + " · gun run · " + lateral.ToString("0") + "° off at " + UnitConverter.DistanceReading(horizontal) + " · opening out");
+                return;
+            }
+
+            // The aim point: the gun's own solution where the game has one.
+            aircraft.weaponManager.currentWeaponStation = station;
+            List<Unit> targets = aircraft.weaponManager.GetTargetList();
+            if (targets.Count != 1 || targets[0] != target) { targets.Clear(); targets.Add(target); aircraft.weaponManager.TargetListChanged(); }
+            GlobalPosition aim = known;
+            ControlsFilter filter = aircraft.GetControlsFilter();
+            if (filter != null)
+            {
+                try { filter.GetAim(target, out GlobalPosition? solution, out GlobalPosition? _); if (solution.HasValue) aim = solution.Value; } catch { }
+            }
+
+            // The dive, eased in from the flight path toward the aim point.
+            Vector3 flatAim = aim - here; flatAim.y = 0f;
+            float depression = Mathf.Atan2(here.y - aim.y, Mathf.Max(flatAim.magnitude, 1f)) * Mathf.Rad2Deg;
+            float path = aircraft.rb != null && aircraft.speed > 1f ? -Mathf.Asin(Mathf.Clamp(aircraft.rb.velocity.y / aircraft.speed, -1f, 1f)) * Mathf.Rad2Deg : 0f;
+            if (!gunDiving) { gunDiving = true; gunDive = Mathf.Max(path, 0f); gunFiredThisPass = false; }
+            gunDive = Mathf.MoveTowards(gunDive, lateral < LaserLineUp ? depression : Mathf.Min(gunDive, depression), LaserDiveRate * 1.5f * Time.fixedDeltaTime);
+            float aimAbove = here.y - flatAim.magnitude * Mathf.Tan(gunDive * Mathf.Deg2Rad) - known.y;
+            flight.Altitude = Mathf.Max(aimAbove, 0f);
+            Steer(aim);
+            flight.Altitude = ordered;
+            if (aircraft.speed > strafe && controlInputs != null) controlInputs.throttle = Mathf.Min(controlInputs.throttle, Mathf.Lerp(0.6f, 0.05f, (aircraft.speed - strafe) / 60f));
+            flight.Doing("GUN RUN · pass " + (gunPasses + 1) + " of " + GunPasses + " · " + UnitConverter.DistanceReading(dist));
+
+            // Off: close in, or low.
+            if (horizontal < GunBreakRange || aircraft.radarAlt < GunFloor)
+            {
+                gunPasses++;
+                gunOpening = true;
+                Tracing.Flight("[flight] " + flight.Name + " · gun pass " + gunPasses + " done · " + (gunFiredThisPass ? "fired" : "no shot") +
+                    " · off at " + UnitConverter.DistanceReading(horizontal) + ", " + aircraft.radarAlt.ToString("0") + " m");
+                return;
+            }
+
+            // Fire with the aim point on the boresight, inside the gun's range.
+            Vector3 bore = Vector3.zero;
+            foreach (Weapon w in station.Weapons) if (w != null) bore += w.transform.forward;
+            if (bore.sqrMagnitude < 0.01f) bore = aircraft.transform.forward;
+            float off = Vector3.Angle(bore, aim - here);
+            float tolerance = Mathf.Clamp(50f * Mathf.Max(target.maxRadius, 1f) / Mathf.Max(dist, 10f), 0.5f, 3f) * 1.5f;
+            if (dist <= maxRange && off <= tolerance)
+            {
+                pilot.Fire();
+                if (!gunFiredThisPass)
+                    Tracing.Flight("[flight] " + flight.Name + " · guns · " + UnitConverter.DistanceReading(dist) + ", " + off.ToString("0.0") + "° off the solution (" + tolerance.ToString("0.0") + "°)");
+                gunFiredThisPass = true; gunFiredAtAll = true;
+            }
+            else if (dist <= maxRange && now - gunHoldSaidAt > 3f)
+            {
+                gunHoldSaidAt = now;
+                Tracing.Flight("[flight] " + flight.Name + " · guns holding · " + off.ToString("0.0") + "° off the solution (" + tolerance.ToString("0.0") + "°) at " + UnitConverter.DistanceReading(dist));
+            }
         }
 
         // Who in the wing takes the shot at this target: the first `shots`
