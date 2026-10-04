@@ -2025,10 +2025,8 @@ namespace NOrders
         // moment the first round left, the list cleared, and the rounds flew
         // on blind.
         private float laserMax = -1f, laserMaxAt = -10f;
-        private bool laserNotLasedSaid, laserOpening;
+        private bool laserNotLasedSaid;
         private float laserHoldSaidAt = -10f;
-        private bool laserDiving;
-        private float laserDive;                    // degrees: the dive angle being flown, eased toward the target's
         private const float LaserDiveRate = 4f;     // degrees a second the dive steepens by
         private const float LaserLineUp = 12f;      // degrees off the target's bearing before the push-over starts
         private const float MaxLaserDive = 35f;     // degrees down to the target, at most, to start the dive
@@ -2049,14 +2047,6 @@ namespace NOrders
                 try { if (prefab != null) laserMax = prefab.CalcRange(aircraft.speed, here.y, known.y, dist, 0f, out _); } catch { }
                 if (laserMax <= 0f) laserMax = needs.maxRange;
             }
-            // Inside minimum range: round again, not the combat pilot -- handed
-            // over at 550 m a Vagrant circled close in at the target's guns.
-            if (dist < needs.minRange * 1.1f && !laserOpening)
-            {
-                laserOpening = true;
-                Tracing.Flight("[flight] " + flight.Name + " · inside minimum range for the laser run · opening out");
-            }
-
             // The spot on ahead of the shot: the target on the list once the
             // round could nearly reach it.
             List<Unit> targets = aircraft.weaponManager.GetTargetList();
@@ -2069,84 +2059,34 @@ namespace NOrders
                 aircraft.weaponManager.TargetListChanged();
             }
 
-            // The ring is off the nose, so the nose goes down onto the target
-            // once in range: flown level at 2.5-3 km, a Vagrant had its
-            // truck 26 degrees below the nose, outside an 8-degree ring, and
-            // overflew it without a shot. Too steep for a sane dive (close
-            // in and high), it opens out and comes back.
-            Vector3 flatTo = known - here; flatTo.y = 0f;
-            float depression = Mathf.Atan2(here.y - known.y, Mathf.Max(flatTo.magnitude, 1f)) * Mathf.Rad2Deg;
-            // Opening out: back toward the edge of range and back up to a
-            // height to dive from (at the ordered height, climbing on the
-            // way), then in again. Ended on the angle alone, a jet pulled off
-            // low turned straight back in, still low.
-            if (laserOpening)
+            // The run (Approach / DiveAt, as the strafing run): in at a height
+            // whose dive at launch range is about ten degrees, turned onto the
+            // target out at a little beyond launch range, then the dive eased
+            // in with the nose flown onto the target -- the HUD's ring is off
+            // the nose. Low in the dive, or inside minimum range: out and round
+            // again, the rounds still owed carried over.
+            if (laserRun.For != flight.RunInStarted) { laserRun.For = flight.RunInStarted; laserRun.Opening = false; laserRun.Diving = false; }
+            // Inside minimum range: round again, not the combat pilot -- handed
+            // over at 550 m a Vagrant circled close in at the target's guns.
+            if (dist < needs.minRange * 1.1f && !laserRun.Opening)
             {
-                float climbTo = Mathf.Min(Mathf.Max(flight.Altitude, LaserDiveFloor), LaserDiveFloor * 2.5f);
-                if (dist >= laserMax * 0.85f && aircraft.radarAlt >= climbTo * 0.9f) laserOpening = false;
-                else
-                {
-                    laserDiving = false;
-                    flight.Doing("OPENING OUT FOR THE LASER RUN · " + UnitConverter.DistanceReading(dist));
-                    Vector3 away = Flat(here - known);
-                    Steer(here + away * 5000f);
-                    return;
-                }
+                laserRun.Opening = true;
+                Tracing.Flight("[flight] " + flight.Name + " · inside minimum range for the laser run · opening out");
             }
-            // Low in the dive (not lased, not in the ring, a round still to
-            // go): off and round again rather than pressing at the ground. The
-            // rounds still owed carry over to the next pass.
-            if (dist <= laserMax && aircraft.radarAlt < LaserDiveFloor)
+            if (laserRun.Diving && dist <= laserMax && aircraft.radarAlt < LaserDiveFloor)
             {
-                laserOpening = true;
+                laserRun.Opening = true;
                 Tracing.Flight("[flight] " + flight.Name + " · down to " + aircraft.radarAlt.ToString("0") + " m in the laser dive" +
                     (flight.SalvoLeft > 0 ? " with " + flight.SalvoLeft + " still to fire" : " without a shot") + " · pulling off");
-                return;
             }
-            if (dist <= laserMax && depression > MaxLaserDive && flight.SalvoLeft <= 0)
-            {
-                laserOpening = true;
-                Tracing.Flight("[flight] " + flight.Name + " · too steep for the laser run (" + depression.ToString("0") + "° down at " +
-                    UnitConverter.DistanceReading(dist) + ") · opening out");
-                return;
-            }
-            flight.Doing((dist > laserMax ? "LASER RUN · " : "LAUNCHING · ") + UnitConverter.DistanceReading(dist) +
-                " · max " + UnitConverter.DistanceReading(laserMax));
-            if (dist > laserMax)
-            {
-                flight.InLaunchRangeSince = -1f;
-                laserDiving = false;
-                Steer(known);
-                return;
-            }
+            float runHeight = Mathf.Clamp(laserMax * Mathf.Tan(10f * Mathf.Deg2Rad), LaserDiveFloor * 1.5f, Mathf.Max(flight.Altitude, LaserDiveFloor * 1.5f));
+            if (Approach(laserRun, known, laserMax * 1.1f, runHeight, "LASER RUN")) { flight.InLaunchRangeSince = -1f; return; }
             if (flight.InLaunchRangeSince < 0f) flight.InLaunchRangeSince = now;
-            if (now - flight.InLaunchRangeSince > 60f) { CompleteRunIn(pilot, "no laser launch in a minute"); return; }
-
-            float corner = parameters != null ? parameters.cornerSpeed : 0f;
-            if (corner > 0f && aircraft.speed < corner * 1.15f && flight.SalvoLeft <= 0)
-            {
-                controlInputs.throttle = 1f; Reheat();
-                Steer(aircraft.GlobalPosition() + Flat(aircraft.transform.forward) * 5000f, default, 20f);
-                return;
-            }
-
-            // Nose onto the target, smoothly. Dropping the steering point
-            // straight to the target the moment it came in range pushed the
-            // nose over at negative g, jerkily. Now the push-over waits until
-            // the jet is turned onto the target, then the dive angle grows
-            // from the present flight path at a few degrees a second to the
-            // angle down to the target; the steering point's height follows it.
-            Vector3 trackFlat = Flat(aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward);
-            float lateral = Vector3.Angle(trackFlat, flatTo);
-            float path = aircraft.rb != null && aircraft.speed > 1f ? -Mathf.Asin(Mathf.Clamp(aircraft.rb.velocity.y / aircraft.speed, -1f, 1f)) * Mathf.Rad2Deg : 0f;
-            if (!laserDiving) { laserDiving = true; laserDive = Mathf.Max(path, 0f); }
-            float wantDive = lateral < LaserLineUp ? depression : Mathf.Min(laserDive, depression);
-            laserDive = Mathf.MoveTowards(laserDive, wantDive, LaserDiveRate * Time.fixedDeltaTime);
-            float aimAbove = here.y - flatTo.magnitude * Mathf.Tan(laserDive * Mathf.Deg2Rad) - known.y;
-            float ordered = flight.Altitude;
-            flight.Altitude = Mathf.Max(aimAbove, 0f);
-            Steer(known);
-            flight.Altitude = ordered;
+            if (now - flight.InLaunchRangeSince > 90f) { CompleteRunIn(pilot, "no laser launch in 90 s"); return; }
+            DiveAt(laserRun, known, known, null, parameters != null ? Mathf.Max(parameters.cornerSpeed * 1.6f, 260f) : 260f);
+            flight.Doing((dist > laserMax ? "LASER RUN · DIVING · " : "LAUNCHING · ") + UnitConverter.DistanceReading(dist) +
+                " · max " + UnitConverter.DistanceReading(laserMax));
+            if (dist > laserMax) return;
             float off = Vector3.Angle(aircraft.transform.forward, known - here);
             float align = needs.minAlignment > 0f ? needs.minAlignment : 30f;
             float ring = Mathf.Min(align, Mathf.Max(dist, needs.minRange) * 0.002f);
@@ -2200,6 +2140,100 @@ namespace NOrders
             if (KindAmmo(station) <= 0) flight.SalvoLeft = 0;
         }
 
+        // The run shared by strafing and laser-rocket attacks. In at run
+        // height to the entry range and turned onto the target there; inside
+        // it too far off the line, out again far enough to come round (the
+        // weapon's entry, a reversal's worth and a kilometre -- ended any
+        // shorter, a jet still facing away was "off the line" again and
+        // opened out again, every frame); then a dive eased in at the aim
+        // point. The dive steers the nose, or the weapon's own boresight,
+        // onto the aim point directly: flown by the flight path, as first
+        // written, the guns sat 4-8 degrees off the solution all the way in.
+        private sealed class AttackRun
+        {
+            internal bool Opening, Diving;
+            internal float Dive;
+            internal float For = -1f;
+        }
+        private readonly AttackRun gunRun = new AttackRun(), laserRun = new AttackRun();
+
+        // True while the approach is flying the aircraft; false inside the
+        // entry range on the line, where the dive takes it.
+        private bool Approach(AttackRun run, GlobalPosition known, float entry, float height, string label)
+        {
+            GlobalPosition here = aircraft.GlobalPosition();
+            Vector3 flatTo = known - here; flatTo.y = 0f;
+            float horizontal = flatTo.magnitude;
+            Vector3 track = Flat(aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward);
+            float lateral = horizontal > 1f ? Vector3.Angle(track, flatTo) : 0f;
+            float turn = aircraft.speed * aircraft.speed / (9.81f * 4f);
+            float ordered = flight.Altitude;
+            if (run.Opening)
+            {
+                if (horizontal >= entry + 2f * turn + 1000f && aircraft.radarAlt >= height * 0.8f) { run.Opening = false; run.Diving = false; }
+                else
+                {
+                    flight.Doing(label + " · OPENING OUT · " + UnitConverter.DistanceReading(horizontal));
+                    flight.Altitude = height;
+                    Steer(here + Flat(here - known) * 5000f);
+                    flight.Altitude = ordered;
+                    return true;
+                }
+            }
+            if (horizontal > entry)
+            {
+                run.Diving = false;
+                flight.Doing(label + " · LINING UP · " + UnitConverter.DistanceReading(horizontal));
+                flight.Altitude = height;
+                Steer(known);
+                flight.Altitude = ordered;
+                return true;
+            }
+            if (!run.Diving && lateral > 25f)
+            {
+                run.Opening = true;
+                Tracing.Flight("[flight] " + flight.Name + " · " + label.ToLowerInvariant() + " · " + lateral.ToString("0") + "° off the line at " +
+                    UnitConverter.DistanceReading(horizontal) + " · opening out to come round");
+                return true;
+            }
+            return false;
+        }
+
+        // The dive: the angle eased from the flight path toward the angle
+        // down to the aim point once on the line, and the nose (or the
+        // station's boresight) flown straight at it.
+        private void DiveAt(AttackRun run, GlobalPosition aim, GlobalPosition known, WeaponStation bore, float speedCap)
+        {
+            GlobalPosition here = aircraft.GlobalPosition();
+            Vector3 toAim = aim - here;
+            Vector3 flatAim = toAim; flatAim.y = 0f;
+            Vector3 flatTo = known - here; flatTo.y = 0f;
+            Vector3 track = Flat(aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward);
+            float lateral = flatTo.sqrMagnitude > 1f ? Vector3.Angle(track, flatTo) : 0f;
+            float depression = Mathf.Atan2(-toAim.y, Mathf.Max(flatAim.magnitude, 1f)) * Mathf.Rad2Deg;
+            float path = aircraft.rb != null && aircraft.speed > 1f ? -Mathf.Asin(Mathf.Clamp(aircraft.rb.velocity.y / aircraft.speed, -1f, 1f)) * Mathf.Rad2Deg : 0f;
+            if (!run.Diving) { run.Diving = true; run.Dive = Mathf.Max(path, 0f); }
+            run.Dive = Mathf.MoveTowards(run.Dive, lateral < LaserLineUp ? depression : Mathf.Min(run.Dive, depression), LaserDiveRate * 1.5f * Time.fixedDeltaTime);
+            float rad = run.Dive * Mathf.Deg2Rad;
+            Vector3 dir = Flat(flatAim) * Mathf.Cos(rad) + Vector3.down * Mathf.Sin(rad);
+            if (bore != null)
+            {
+                Vector3 b = Vector3.zero;
+                foreach (Weapon w in bore.Weapons) if (w != null) b += w.transform.forward;
+                if (b.sqrMagnitude > 0.01f && Vector3.Angle(b, aircraft.transform.forward) < 15f)
+                    dir = Quaternion.FromToRotation(b.normalized, aircraft.transform.forward) * dir;
+            }
+            GlobalPosition point = here + dir * Mathf.Max(toAim.magnitude, 1500f);
+            if (!aircraft.flightAssist) aircraft.SetFlightAssist(enabled: true);
+            if (controlInputs != null)
+            {
+                controlInputs.throttle = aircraft.speed > speedCap ? Mathf.Lerp(0.6f, 0.05f, (aircraft.speed - speedCap) / 60f) : 0.85f;
+                IntendedThrottle = controlInputs.throttle;
+            }
+            aircraft.autopilot.AutoAim(point, aimVelocity: false, ignoreCollisions: true, runwayAlign: false,
+                effort: 1f, bankAllowed: 70f, followTerrain: false, altitudeHold: 0f, targetVelocity: Vector3.zero);
+        }
+
         // A strafing run, flown by us. Down to run height out at the entry
         // range; turned onto the target there (too tight a turn: open out
         // and come round); a shallow dive eased in on the gun's own aim
@@ -2209,10 +2243,9 @@ namespace NOrders
         // 500 m or 150 m over the ground, open out, climb, and again, up to
         // GunPasses. Power held to strafing speed. The pass count keeps the
         // usual "rounds away, egress" from ending it after the first burst.
-        private float gunRunFor = -1f;
         private int gunPasses;
-        private bool gunOpening, gunDiving, gunFiredThisPass, gunFiredAtAll;
-        private float gunDive, gunHoldSaidAt = -10f;
+        private bool gunFiredThisPass, gunFiredAtAll;
+        private float gunHoldSaidAt = -10f;
         private const int GunPasses = 4;
         private const float GunRunHeight = 700f, GunFloor = 150f, GunBreakRange = 500f, GunStrafeSpeed = 240f;
 
@@ -2220,10 +2253,11 @@ namespace NOrders
         {
             WeaponInfo info = station.WeaponInfo;
             float now = Time.timeSinceLevelLoad;
-            if (gunRunFor != flight.RunInStarted)
+            if (gunRun.For != flight.RunInStarted)
             {
-                gunRunFor = flight.RunInStarted;
-                gunPasses = 0; gunOpening = false; gunDiving = false; gunFiredThisPass = false; gunFiredAtAll = false;
+                gunRun.For = flight.RunInStarted;
+                gunRun.Opening = false; gunRun.Diving = false;
+                gunPasses = 0; gunFiredThisPass = false; gunFiredAtAll = false;
             }
             if (KindAmmo(station) <= 0 || gunPasses >= GunPasses)
             {
@@ -2240,43 +2274,25 @@ namespace NOrders
             float dist = FastMath.Distance(known, here);
             float maxRange = info.targetRequirements.maxRange > 0f ? info.targetRequirements.maxRange : 1500f;
             float entry = Mathf.Max(maxRange * 2.5f, 3500f);
-            float ordered = flight.Altitude;
-
-            // Strafing speed, not a supersonic dive.
             float corner = parameters != null ? parameters.cornerSpeed : 0f;
             float strafe = Mathf.Max(GunStrafeSpeed, corner * 1.2f);
 
-            if (gunOpening)
+            bool wasDiving = gunRun.Diving;
+            if (Approach(gunRun, known, entry, GunRunHeight, "GUN RUN"))
             {
-                if (horizontal >= entry * 0.9f && aircraft.radarAlt >= GunRunHeight * 0.8f) { gunOpening = false; gunDiving = false; }
-                else
-                {
-                    flight.Doing("GUN RUN · OPENING OUT · pass " + (gunPasses + 1) + " of " + GunPasses);
-                    flight.Altitude = GunRunHeight;
-                    Steer(here + Flat(here - known) * 5000f);
-                    flight.Altitude = ordered;
-                    return;
-                }
-            }
-
-            Vector3 track = Flat(aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward);
-            float lateral = horizontal > 1f ? Vector3.Angle(track, flatTo) : 0f;
-            if (horizontal > entry)
-            {
-                gunDiving = false;
-                flight.Doing("GUN RUN · LINING UP · " + UnitConverter.DistanceReading(horizontal));
-                flight.Altitude = GunRunHeight;
-                Steer(known);
-                flight.Altitude = ordered;
                 if (aircraft.speed > strafe && controlInputs != null) controlInputs.throttle = Mathf.Min(controlInputs.throttle, 0.4f);
                 return;
             }
-            // Inside the entry range and not lined up: the turn would be too
-            // tight to settle. Round again.
-            if (!gunDiving && lateral > 25f)
+            if (!wasDiving) gunFiredThisPass = false;
+
+            // Off: close in, or low.
+            if (horizontal < GunBreakRange || aircraft.radarAlt < GunFloor)
             {
-                gunOpening = true;
-                Tracing.Flight("[flight] " + flight.Name + " · gun run · " + lateral.ToString("0") + "° off at " + UnitConverter.DistanceReading(horizontal) + " · opening out");
+                gunPasses++;
+                gunRun.Opening = true;
+                Tracing.Flight("[flight] " + flight.Name + " · gun pass " + gunPasses + " done · " + (gunFiredThisPass ? "fired" : "no shot") +
+                    " · off at " + UnitConverter.DistanceReading(horizontal) + ", " + aircraft.radarAlt.ToString("0") + " m");
+                Steer(here + Flat(here - known) * 5000f);
                 return;
             }
 
@@ -2290,36 +2306,17 @@ namespace NOrders
             {
                 try { filter.GetAim(target, out GlobalPosition? solution, out GlobalPosition? _); if (solution.HasValue) aim = solution.Value; } catch { }
             }
-
-            // The dive, eased in from the flight path toward the aim point.
-            Vector3 flatAim = aim - here; flatAim.y = 0f;
-            float depression = Mathf.Atan2(here.y - aim.y, Mathf.Max(flatAim.magnitude, 1f)) * Mathf.Rad2Deg;
-            float path = aircraft.rb != null && aircraft.speed > 1f ? -Mathf.Asin(Mathf.Clamp(aircraft.rb.velocity.y / aircraft.speed, -1f, 1f)) * Mathf.Rad2Deg : 0f;
-            if (!gunDiving) { gunDiving = true; gunDive = Mathf.Max(path, 0f); gunFiredThisPass = false; }
-            gunDive = Mathf.MoveTowards(gunDive, lateral < LaserLineUp ? depression : Mathf.Min(gunDive, depression), LaserDiveRate * 1.5f * Time.fixedDeltaTime);
-            float aimAbove = here.y - flatAim.magnitude * Mathf.Tan(gunDive * Mathf.Deg2Rad) - known.y;
-            flight.Altitude = Mathf.Max(aimAbove, 0f);
-            Steer(aim);
-            flight.Altitude = ordered;
-            if (aircraft.speed > strafe && controlInputs != null) controlInputs.throttle = Mathf.Min(controlInputs.throttle, Mathf.Lerp(0.6f, 0.05f, (aircraft.speed - strafe) / 60f));
+            DiveAt(gunRun, aim, known, station, strafe);
             flight.Doing("GUN RUN · pass " + (gunPasses + 1) + " of " + GunPasses + " · " + UnitConverter.DistanceReading(dist));
 
-            // Off: close in, or low.
-            if (horizontal < GunBreakRange || aircraft.radarAlt < GunFloor)
-            {
-                gunPasses++;
-                gunOpening = true;
-                Tracing.Flight("[flight] " + flight.Name + " · gun pass " + gunPasses + " done · " + (gunFiredThisPass ? "fired" : "no shot") +
-                    " · off at " + UnitConverter.DistanceReading(horizontal) + ", " + aircraft.radarAlt.ToString("0") + " m");
-                return;
-            }
-
-            // Fire with the aim point on the boresight, inside the gun's range.
+            // Fire with the aim point on the boresight, inside the gun's range:
+            // by the target's size at range, as the game's AI strafes, given
+            // a little more for the spread of a burst.
             Vector3 bore = Vector3.zero;
             foreach (Weapon w in station.Weapons) if (w != null) bore += w.transform.forward;
             if (bore.sqrMagnitude < 0.01f) bore = aircraft.transform.forward;
             float off = Vector3.Angle(bore, aim - here);
-            float tolerance = Mathf.Clamp(50f * Mathf.Max(target.maxRadius, 1f) / Mathf.Max(dist, 10f), 0.5f, 3f) * 1.5f;
+            float tolerance = Mathf.Clamp(50f * Mathf.Max(target.maxRadius, 1f) / Mathf.Max(dist, 10f), 1f, 4f);
             if (dist <= maxRange && off <= tolerance)
             {
                 pilot.Fire();
