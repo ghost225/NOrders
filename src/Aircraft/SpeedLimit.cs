@@ -38,6 +38,12 @@ namespace NOrders
     {
         private const string Name = "Combat speed limit";
         private static float noteAt, groundNoteAt;
+        // Aircraft in a pull-out, held until climbing. Checked afresh each
+        // frame, the combat pilot had the stick back the moment the sink
+        // eased and nosed down at the target again: Bolt, an F-99 on a gun
+        // run at 334 m/s, went in a few seconds after a pull-out at 510 m.
+        private static readonly System.Collections.Generic.HashSet<Aircraft> pulling = new System.Collections.Generic.HashSet<Aircraft>();
+        private const float GunRunSpeed = 240f;      // m/s: a strafing pass, not a supersonic dive
 
         private static void Postfix(Pilot pilot)
         {
@@ -74,11 +80,27 @@ namespace NOrders
                 // level, nose up the way it is going, until it is climbing.
                 // (Sink rate and height only: the game's terrain warning is an
                 // exclusion-zone check, not a ground one.)
+                // A gun pass on a ground target flown at strafing speed: the
+                // combat pilot runs it at full power from wherever it starts.
+                WeaponStation current = aircraft.weaponManager != null ? aircraft.weaponManager.currentWeaponStation : null;
+                if (inputs != null && flight.Mode == FlightMode.Strike && current?.WeaponInfo != null && current.WeaponInfo.gun &&
+                    !FlightOrders.IsAirTarget(flight.Target) && p != null)
+                {
+                    float gunSpeed = Mathf.Max(GunRunSpeed, p.cornerSpeed * 1.2f);
+                    if (aircraft.speed > gunSpeed) inputs.throttle = Mathf.Min(inputs.throttle, Mathf.Lerp(0.6f, 0.05f, (aircraft.speed - gunSpeed) / 60f));
+                }
                 if (aircraft.rb != null)
                 {
                     float sink = -aircraft.rb.velocity.y;
-                    if (sink > 15f && aircraft.radarAlt < sink * 4f + 100f)
+                    // Earlier the faster it goes: a pull-out's radius grows
+                    // with the square of the speed.
+                    float lookAhead = Mathf.Max(4f, aircraft.speed / 60f);
+                    bool holding = pulling.Contains(aircraft);
+                    if (holding && (aircraft.rb.velocity.y > 5f || aircraft.radarAlt > 1500f)) { pulling.Remove(aircraft); holding = false; }
+                    if (holding || (sink > 15f && aircraft.radarAlt < sink * lookAhead + 150f))
                     {
+                        if (pulling.Count > 200) pulling.Clear();
+                        pulling.Add(aircraft);
                         Vector3 ahead = aircraft.rb.velocity; ahead.y = 0f;
                         if (ahead.sqrMagnitude < 1f) ahead = aircraft.transform.forward; ahead.y = 0f;
                         GlobalPosition up = aircraft.GlobalPosition() + ahead.normalized * 3000f + Vector3.up * 1200f;
