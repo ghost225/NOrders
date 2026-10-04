@@ -1388,6 +1388,7 @@ namespace NOrders
             flight.Altitude = height;
             Steer(aim);
             flight.Altitude = ordered;
+            if (weapon != null && weapon.gun) { NativeSpeedLimitPatch.HoldGunSpeed(aircraft, controlInputs); IntendedThrottle = controlInputs.throttle; }
         }
 
         // A missile strike with nothing shooting at us: fly at the ordered
@@ -1724,7 +1725,7 @@ namespace NOrders
             flight.Doing(flight.SettingUp ? "SETTING UP THE RUN" : "RUNNING IN · " + UnitConverter.DistanceReading(range));
             Steer(aim);
         }
-        private const float ShallowDive = 25f;      // degrees down to the target the combat pilot is handed a run at
+        private const float ShallowDive = 15f;      // degrees down to the target the combat pilot is handed a run at: inside its 20-degree attack cone
         private const float BankingTurn = 25f;      // degrees off asked for, at the least: past the autopilot's 20-degree yaw zone
         private const float BombLine = 8f;          // degrees off the target's bearing that counts as on the line
 

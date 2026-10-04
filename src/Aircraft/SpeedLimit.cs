@@ -45,6 +45,15 @@ namespace NOrders
         private static readonly System.Collections.Generic.HashSet<Aircraft> pulling = new System.Collections.Generic.HashSet<Aircraft>();
         private const float GunRunSpeed = 240f;      // m/s: a strafing pass, not a supersonic dive
 
+        // Power off above strafing speed: 240 m/s, or a little over corner.
+        internal static void HoldGunSpeed(Aircraft aircraft, ControlInputs inputs)
+        {
+            AircraftParameters p = aircraft != null ? aircraft.GetAircraftParameters() : null;
+            if (inputs == null || p == null) return;
+            float gunSpeed = Mathf.Max(GunRunSpeed, p.cornerSpeed * 1.2f);
+            if (aircraft.speed > gunSpeed) inputs.throttle = Mathf.Min(inputs.throttle, Mathf.Lerp(0.6f, 0.05f, (aircraft.speed - gunSpeed) / 60f));
+        }
+
         private static void Postfix(Pilot pilot)
         {
             if (!Guard.Ok(Name)) return;
@@ -83,12 +92,9 @@ namespace NOrders
                 // A gun pass on a ground target flown at strafing speed: the
                 // combat pilot runs it at full power from wherever it starts.
                 WeaponStation current = aircraft.weaponManager != null ? aircraft.weaponManager.currentWeaponStation : null;
-                if (inputs != null && flight.Mode == FlightMode.Strike && current?.WeaponInfo != null && current.WeaponInfo.gun &&
-                    !FlightOrders.IsAirTarget(flight.Target) && p != null)
-                {
-                    float gunSpeed = Mathf.Max(GunRunSpeed, p.cornerSpeed * 1.2f);
-                    if (aircraft.speed > gunSpeed) inputs.throttle = Mathf.Min(inputs.throttle, Mathf.Lerp(0.6f, 0.05f, (aircraft.speed - gunSpeed) / 60f));
-                }
+                if (flight.Mode == FlightMode.Strike && current?.WeaponInfo != null && current.WeaponInfo.gun &&
+                    !FlightOrders.IsAirTarget(flight.Target))
+                    HoldGunSpeed(aircraft, inputs);
                 if (aircraft.rb != null)
                 {
                     float sink = -aircraft.rb.velocity.y;

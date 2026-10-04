@@ -1764,11 +1764,17 @@ namespace NOrders
             straight = false;
             if (info == null) return false;
             float reach = info.targetRequirements.maxRange;
-            // A gun pass is the game's combat pilot's from the start, under
-            // our guardrails (strafing speed, held pull-outs: NativeSpeedLimitPatch).
-            // Our run-in delivered it at 750 m and 334 m/s, and an F-99 went
-            // into the ground.
-            if (info.gun) return false;
+            // A gun pass: brought down to strafing height a few kilometres
+            // out at strafing speed, then the combat pilot's, under our
+            // guardrails (strafing speed, held pull-outs: NativeSpeedLimitPatch).
+            // Handed over at 3,200 m it holds about that height and flies
+            // over the target; delivered at 334 m/s an F-99 went in.
+            if (info.gun)
+            {
+                height = 800f;
+                range = Mathf.Max(reach * 2f, 4000f);
+                return true;
+            }
             // Level bombs: our own run at the flight's height (FlyBombRunIn).
             if (info.bomb && !info.glideBomb && !info.laserGuided)
             {
