@@ -1034,7 +1034,7 @@ namespace NOrders
                     // strike speeds every line-up was flown flat on the
                     // rudder. The G limit (GLimitPatch) keeps the bank honest.
                     else if (parameters != null && aircraft.speed >= parameters.cornerSpeed)
-                        lateral = Mathf.Max(lateral, flight.Mode == FlightMode.Strike ? StrikeTurn : BankingTurn);
+                        lateral = Mathf.Max(lateral, flight.Mode == FlightMode.Strike || flight.Mode == FlightMode.Egress ? StrikeTurn : BankingTurn);
                     if (track.sqrMagnitude > 1f && toward.sqrMagnitude > 1f && Vector3.Angle(track, toward) > lateral)
                     {
                         float side = Mathf.Sign(Vector3.SignedAngle(track, toward, Vector3.up));
@@ -1806,8 +1806,9 @@ namespace NOrders
             Steer(aim);
         }
         private const float ShallowDive = 15f;      // degrees down to the target the combat pilot is handed a run at: inside its 20-degree attack cone
-        // On a strike, firmer still: at 25 degrees a Vagrant run-in circled
-        // the target at 7.5 km for a minute before coming round.
+        // On a strike or an egress, firmer still: at 25 degrees a Vagrant
+        // run-in circled the target at 7.5 km for a minute before coming
+        // round, and an egress turned away lazily.
         private const float StrikeTurn = 50f;
         // Rounds of this weapon left across every station carrying it: a
         // salvo runs on from one pod to the next of the same weapon.

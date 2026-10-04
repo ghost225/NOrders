@@ -53,6 +53,7 @@ namespace NOrders
         public bool BombRun;                // lined up with unguided bombs: our own release, not the combat pilot's
         public int BombsThisPass;
         public bool NotedNoLock;
+        public bool NotedRoundsFlying;
         public int StrikeStartAmmo = -1;
         public FlightMode PreviousMode = FlightMode.Orbit;
         public FlightRoe Roe = FlightRoe.Tight;
@@ -925,6 +926,25 @@ namespace NOrders
                     bool clear = Host.Dead(flight.Target) || (!IsAirTarget(flight.Target) &&
                         FastMath.Distance(flight.Aircraft.GlobalPosition(), flight.Target.GlobalPosition())
                             >= Tuning.StandoffMetres);
+                    // Not round again while its own rounds are still on the way:
+                    // a glide bomb flies a minute or more, and the target is
+                    // still standing when the egress is done. A strike ordered
+                    // at two glide bombs released them, was clear at once at
+                    // 15 km, came straight back for a third and then a
+                    // missile. Held until they are down (two minutes past the
+                    // egress at most), then the target is looked at again.
+                    if ((clear || Time.timeSinceLevelLoad >= flight.EgressUntil) && !Host.Dead(flight.Target) && !IsAirTarget(flight.Target) &&
+                        Time.timeSinceLevelLoad < flight.EgressUntil + 120f && OwnRoundsFlying(flight))
+                    {
+                        if (!flight.NotedRoundsFlying)
+                        {
+                            flight.NotedRoundsFlying = true;
+                            Tracing.Flight("[flight] " + flight.Name + " · clear, waiting for its rounds to land before another pass");
+                        }
+                        clear = false;
+                        if (Time.timeSinceLevelLoad >= flight.EgressUntil) flight.EgressUntil = Time.timeSinceLevelLoad + 2f;
+                    }
+                    else flight.NotedRoundsFlying = false;
                     if ((clear || Time.timeSinceLevelLoad >= flight.EgressUntil) && flight.StrikeList.Count > 0)
                         StrikePlans.Next(flight, "after the pass");
                     else if (clear || Time.timeSinceLevelLoad >= flight.EgressUntil)
@@ -1860,6 +1880,15 @@ namespace NOrders
                     (flight.Target != null && aircraft.NetworkHQ != null ? " · target " + (aircraft.NetworkHQ.IsTargetLased(flight.Target) ? "lased" : "NOT lased") : ""));
             }
             return true;
+        }
+
+        // Any round this aircraft fired still in the air.
+        internal static bool OwnRoundsFlying(Flight flight)
+        {
+            if (flight?.Aircraft == null) return false;
+            foreach (Missile missile in MissileIndex.From(flight.Aircraft))
+                if (missile != null && !missile.disabled) return true;
+            return false;
         }
 
         // A laser-guided weapon is any use only with a spot on the target:
