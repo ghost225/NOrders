@@ -1744,67 +1744,42 @@ namespace NOrders
         // -- how far ahead they would land, released now -- it opens out
         // toward friendly lines by that throw, a reversal and a kilometre,
         // and comes round.
+        private readonly AttackRun bombRun = new AttackRun();
+
         private void FlyBombRunIn(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station)
         {
             if (flight.BombRun && station.Ammo > 0) { FlyLevelDrop(pilot, target, known, station); return; }
             if (Time.timeSinceLevelLoad - flight.RunInStarted > 420f) { CompleteRunIn(pilot, "bomb run-in timed out"); return; }
+            if (bombRun.For != flight.RunInStarted) { bombRun.For = flight.RunInStarted; bombRun.Opening = false; bombRun.Diving = false; }
+            // An overshot bomb run asks to come round (FlyLevelDrop).
+            if (flight.SettingUp) { flight.SettingUp = false; bombRun.Opening = true; }
             GlobalPosition here = aircraft.GlobalPosition();
             float range = Horizontal(known, here);
             float forward = Horizontal(BombImpact(aircraft, station.WeaponInfo, known.y), here);
-            float turn = aircraft.speed * aircraft.speed / (9.81f * 4.5f);      // a 4.5 g turn's radius
-            Vector3 toTarget = known - here; toTarget.y = 0f;
-            Vector3 track = Flat(aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward);
-            // Flat() is already a unit vector: tested against 1 it read as
-            // nothing, offTrack fell to 0 and a flight flying across the
-            // target's bearing was "on the line" -- and overshot, every frame.
-            float offTrack = toTarget.sqrMagnitude > 1f ? Vector3.Angle(track, toTarget) : 0f;
-            // Room to come round onto the line: the bombs' throw, and a turn's
-            // worth for however far off the bearing it is (two radii for a
-            // reversal), and a little to settle. The same measure decides
-            // both when it is too close and when it has opened out enough, so
-            // the one cannot undo the other.
-            float Need(float off) => forward + 2f * turn * Mathf.Clamp01(off / 180f) + 500f;
-            float room = Need(180f) + 500f;
-
-            if (!flight.SettingUp)
+            float turn = aircraft.speed * aircraft.speed / (9.81f * 4f);
+            // The shared approach (as strafing and laser runs), at the flight's
+            // own height -- bombs need no descent: in to the bombs' throw and
+            // a turn's worth beyond it, turned onto the target there, out and
+            // round if too far off the line inside it.
+            float entry = forward + Mathf.Max(turn, 1500f);
+            if (Approach(bombRun, known, entry, Mathf.Max(flight.Altitude, MinimumClearance), "BOMB RUN")) return;
+            // On the line inside the entry: the bomb run, unless already too
+            // close for the bombs to come down short of it.
+            if (range < forward - BombLead)
             {
-                if (offTrack <= BombLine && range > forward - BombLead)
-                {
-                    flight.BombRun = true;
-                    flight.BombsThisPass = 0;
-                    flight.NotedNoLock = false;
-                    Tracing.Flight("[flight] " + flight.Name + " · on the line · bomb run from " + UnitConverter.DistanceReading(range) +
-                        " at " + aircraft.radarAlt.ToString("0") + " m · bombs carry " + UnitConverter.DistanceReading(forward) + " forward");
-                    FlyLevelDrop(pilot, target, known, station);
-                    return;
-                }
-                if (range < Need(offTrack))
-                {
-                    flight.SettingUp = true;
-                    Tracing.Flight("[flight] " + flight.Name + " · too close to line up the bombs (" + offTrack.ToString("0") + "° off, " +
-                        UnitConverter.DistanceReading(range) + ", they carry " + UnitConverter.DistanceReading(forward) + ") · opening out");
-                }
+                bombRun.Opening = true;
+                Tracing.Flight("[flight] " + flight.Name + " · too close for the bombs (" + UnitConverter.DistanceReading(range) + ", they carry " +
+                    UnitConverter.DistanceReading(forward) + ") · opening out");
+                return;
             }
-
-            GlobalPosition aim = known;
-            if (flight.SettingUp)
-            {
-                Vector3 friendly = flight.HomePosition - known;
-                friendly.y = 0f;
-                if (friendly.sqrMagnitude < 1f) friendly = here - known;
-                friendly.y = 0f;
-                if (friendly.sqrMagnitude < 1f) friendly = -aircraft.transform.forward;
-                GlobalPosition setUp = known + friendly.normalized * (room + 1500f);
-                if (range >= room)
-                {
-                    flight.SettingUp = false;
-                    Tracing.Flight("[flight] " + flight.Name + " · turning in for the bomb run");
-                }
-                else aim = setUp;
-            }
-            flight.Doing(flight.SettingUp ? "SETTING UP THE RUN" : "RUNNING IN · " + UnitConverter.DistanceReading(range));
-            Steer(aim);
+            flight.BombRun = true;
+            flight.BombsThisPass = 0;
+            flight.NotedNoLock = false;
+            Tracing.Flight("[flight] " + flight.Name + " · on the line · bomb run from " + UnitConverter.DistanceReading(range) +
+                " at " + aircraft.radarAlt.ToString("0") + " m · bombs carry " + UnitConverter.DistanceReading(forward) + " forward");
+            FlyLevelDrop(pilot, target, known, station);
         }
+        private const float StandoffDiveFloor = 300f;   // m over the ground: no lower nosed onto a standoff target
         private const float ShallowDive = 15f;      // degrees down to the target the combat pilot is handed a run at: inside its 20-degree attack cone
         // On a strike or an egress, firmer still: at 25 degrees a Vagrant
         // run-in circled the target at 7.5 km for a minute before coming
@@ -1938,11 +1913,24 @@ namespace NOrders
             float launch = Mathf.Max(needs.maxRange * 0.85f, needs.minRange * 1.5f);
 
             if (range < needs.minRange * 1.1f) { CompleteRunIn(pilot, "inside minimum range"); return; }
+            // The shared approach at the ordered height: turned onto the
+            // target out at a little beyond launch range, round again if too
+            // far off the line inside it. Steered at the target all the way,
+            // an optical-missile run-in drifted round in a slow wide turn.
+            if (standoffRun.For != flight.RunInStarted) { standoffRun.For = flight.RunInStarted; standoffRun.Opening = false; standoffRun.Diving = false; }
+            float cone = needs.minAlignment > 0f ? needs.minAlignment : 30f;
+            float noseCap = parameters != null && parameters.maxSpeed > 0f ? parameters.maxSpeed * 0.8f : 400f;
+            if (standoffRun.Diving && aircraft.radarAlt < StandoffDiveFloor)
+            {
+                standoffRun.Opening = true;
+                Tracing.Flight("[flight] " + flight.Name + " · down to " + aircraft.radarAlt.ToString("0") + " m on the standoff run without a launch · pulling off");
+            }
+            if (Approach(standoffRun, known, launch * 1.1f, Mathf.Max(flight.Altitude, MinimumClearance), "STANDOFF RUN")) { flight.InLaunchRangeSince = -1f; return; }
             flight.Doing((range > launch ? "STANDOFF RUN · " : "LAUNCHING · ") + UnitConverter.DistanceReading(range));
             if (range > launch)
             {
                 flight.InLaunchRangeSince = -1f;
-                Steer(known);                                  // at the ordered height: Steer holds it
+                DiveAt(standoffRun, known, known, null, noseCap, cone * 0.5f);
                 return;
             }
             // A saturation fired together: in range, hold near the launch
@@ -1987,12 +1975,12 @@ namespace NOrders
                 return;
             }
 
-            // Nose onto the target, level: the cone is a 3D angle, and from
-            // height a distant target sits only a few degrees below.
-            Steer(known);
+            // Nose onto the target, only as far down as brings it inside the
+            // launch cone: the cone is a 3D angle, and from height the target
+            // can sit below it.
+            DiveAt(standoffRun, known, known, null, noseCap, cone * 0.5f);
             Vector3 toTarget = known - here;
             float off = Vector3.Angle(aircraft.transform.forward, toTarget);
-            float cone = needs.minAlignment > 0f ? needs.minAlignment : 30f;
             // A saturation goes as fast as the racks allow.
             if (off > cone * 0.9f || Time.timeSinceLevelLoad - flight.LastLaunchAt < (saturation != null ? 0.6f : 2.5f)) return;
             if (aircraft.speed < needs.minOwnerSpeed) return;
@@ -2170,7 +2158,7 @@ namespace NOrders
             internal float Dive;
             internal float For = -1f;
         }
-        private readonly AttackRun gunRun = new AttackRun(), laserRun = new AttackRun();
+        private readonly AttackRun gunRun = new AttackRun(), laserRun = new AttackRun(), standoffRun = new AttackRun();
 
         // True while the approach is flying the aircraft; false inside the
         // entry range on the line, where the dive takes it.
@@ -2221,7 +2209,7 @@ namespace NOrders
         // The dive: the angle eased from the flight path toward the angle
         // down to the aim point once on the line, and the nose (or the
         // station's boresight) flown straight at it.
-        private void DiveAt(AttackRun run, GlobalPosition aim, GlobalPosition known, WeaponStation bore, float speedCap)
+        private void DiveAt(AttackRun run, GlobalPosition aim, GlobalPosition known, WeaponStation bore, float speedCap, float slack = 0f)
         {
             GlobalPosition here = aircraft.GlobalPosition();
             Vector3 toAim = aim - here;
@@ -2232,7 +2220,9 @@ namespace NOrders
             float depression = Mathf.Atan2(-toAim.y, Mathf.Max(flatAim.magnitude, 1f)) * Mathf.Rad2Deg;
             float path = aircraft.rb != null && aircraft.speed > 1f ? -Mathf.Asin(Mathf.Clamp(aircraft.rb.velocity.y / aircraft.speed, -1f, 1f)) * Mathf.Rad2Deg : 0f;
             if (!run.Diving) { run.Diving = true; run.Dive = Mathf.Max(path, 0f); }
-            run.Dive = Mathf.MoveTowards(run.Dive, lateral < LaserLineUp ? depression : Mathf.Min(run.Dive, depression), LaserDiveRate * 1.5f * Time.fixedDeltaTime);
+            // With slack, only as far down as brings the aim point inside it.
+            float want = Mathf.Max(depression - slack, 0f);
+            run.Dive = Mathf.MoveTowards(run.Dive, lateral < LaserLineUp ? want : Mathf.Min(run.Dive, want), LaserDiveRate * 1.5f * Time.fixedDeltaTime);
             float rad = run.Dive * Mathf.Deg2Rad;
             Vector3 dir = Flat(flatAim) * Mathf.Cos(rad) + Vector3.down * Mathf.Sin(rad);
             if (bore != null)
