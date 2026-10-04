@@ -2055,6 +2055,11 @@ namespace NOrders
                 laserMax = needs.maxRange;
                 try { if (prefab != null) laserMax = prefab.CalcRange(aircraft.speed, here.y, known.y, dist, 0f, out _); } catch { }
                 if (laserMax <= 0f) laserMax = needs.maxRange;
+                // Never past the round's own rated reach, and short of the
+                // kinematic edge: a laser rocket destructs once it slows, and a
+                // Vagrant's Lynchpins rippled at the HUD's 11 km all went off
+                // short of the target (rated reach 6 km).
+                if (needs.maxRange > 0f) laserMax = Mathf.Min(laserMax * 0.85f, needs.maxRange);
             }
             // The spot on ahead of the shot: the target on the list once the
             // round could nearly reach it.
@@ -2179,7 +2184,11 @@ namespace NOrders
             float ordered = flight.Altitude;
             if (run.Opening)
             {
-                if (horizontal >= entry + 2f * turn + 1000f && aircraft.radarAlt >= height * 0.8f) { run.Opening = false; run.Diving = false; }
+                // Out by the entry and a reversal's width: the turn back carries
+                // it another radius out and two across, then it heads in at an
+                // angle the approach straightens. Out by that and a kilometre
+                // more, a Vagrant ran 19 km from its target.
+                if (horizontal >= entry + 2f * turn && aircraft.radarAlt >= height * 0.8f) { run.Opening = false; run.Diving = false; }
                 else
                 {
                     flight.Doing(label + " · OPENING OUT · " + UnitConverter.DistanceReading(horizontal));
