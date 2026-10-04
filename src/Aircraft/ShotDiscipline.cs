@@ -57,6 +57,24 @@ namespace NOrders
                 float limit = Mathf.Min(cone, info.targetRequirements.minAlignment > 0f ? info.targetRequirements.minAlignment : 180f);
                 Vector3 toTarget = target.transform.position - aircraft.transform.position;
                 float angle = toTarget.sqrMagnitude > 1f ? Vector3.Angle(aircraft.transform.forward, toTarget) : 0f;
+                // An unguided rocket: the cockpit's own SHOOT cue where the
+                // game has a solution (RocketSight), the plain cone where not.
+                if (guidance.Length == 0 && RocketSight(aircraft, station, target, out float off, out float tolerance, out bool inRange))
+                {
+                    if (inRange && off <= tolerance) { angle = 0f; limit = 1f; }
+                    else
+                    {
+                        float at = Time.timeSinceLevelLoad;
+                        if (!said.TryGetValue((aircraft, target), out float lastSight) || at - lastSight > 20f)
+                        {
+                            said[(aircraft, target)] = at;
+                            Tracing.Flight("[flight] " + (flight?.Name ?? aircraft.definition?.unitName ?? aircraft.name) + " · holding rockets · " + ShipNames.Of(target) +
+                                (inRange ? " · aim " + off.ToString("0.0") + "° off the solution (limit " + tolerance.ToString("0.0") + "°)" : " · beyond 75% of range"));
+                        }
+                        OffNose++;
+                        return false;
+                    }
+                }
                 if (angle > limit)
                 {
                     float at = Time.timeSinceLevelLoad;
@@ -160,6 +178,43 @@ namespace NOrders
         // prefab, as the game names it: "IR", "ARH" (active radar), "ARAD"
         // (anti-radiation), "Optical", "Laser", or empty when it has none.
         private static readonly Dictionary<WeaponInfo, string> guidanceOf = new Dictionary<WeaponInfo, string>();
+        // The cockpit's rocket sight (HUDBoresightState): SHOOT when the
+        // target is inside 75% of the weapon's range and the aim point --
+        // the game's own solution (ControlsFilter.CalcAim: lead from the
+        // closing speed, gravity drop, corrected by a simulated trajectory
+        // of the round) -- sits on the boresight, the pods' own direction.
+        // The HUD's "on" is 20 pixels; this takes the game AI's strafing
+        // tolerance instead, by the target's size at range (50 x radius /
+        // range, 0.5-3 degrees), loosened by half again for a ripple of
+        // rockets. False when the game has no solution (no muzzle speed,
+        // out of range, or the pods more than 40 degrees off): the plain
+        // cone decides then.
+        internal static bool RocketSight(Aircraft aircraft, WeaponStation station, Unit target, out float off, out float tolerance, out bool inRange)
+        {
+            off = 0f; tolerance = 0f; inRange = false;
+            try
+            {
+                if (aircraft == null || station?.WeaponInfo == null || target == null) return false;
+                if (aircraft.weaponManager == null || aircraft.weaponManager.currentWeaponStation != station) return false;
+                ControlsFilter filter = aircraft.GetControlsFilter();
+                if (filter == null) return false;
+                filter.GetAim(target, out GlobalPosition? aimPoint, out GlobalPosition? _);
+                if (!aimPoint.HasValue) return false;
+                Vector3 bore = Vector3.zero;
+                GlobalPosition from = aircraft.GlobalPosition();
+                foreach (Weapon weapon in station.Weapons)
+                    if (weapon != null) bore += weapon.transform.forward;
+                if (bore.sqrMagnitude < 0.01f) bore = aircraft.transform.forward;
+                off = Vector3.Angle(bore, aimPoint.Value - from);
+                float range = FastMath.Distance(target.GlobalPosition(), from);
+                float maxRange = station.WeaponInfo.targetRequirements.maxRange;
+                inRange = maxRange <= 0f || range < maxRange * 0.75f;
+                tolerance = Mathf.Clamp(50f * Mathf.Max(target.maxRadius, 1f) / Mathf.Max(range, 10f), 0.5f, 3f) * 1.5f;
+                return true;
+            }
+            catch { return false; }
+        }
+
         public static string Guidance(WeaponInfo info)
         {
             if (info == null) return "";
