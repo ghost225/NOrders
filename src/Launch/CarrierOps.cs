@@ -281,6 +281,9 @@ namespace NOrders
         // Set when the last Launch failed only because no hangar would take
         // the aircraft at that moment -- worth trying again, not giving up on.
         internal static bool LastRefusalWasBusy;
+        // Refused by the spawn itself with a free hangar that takes AI
+        // aircraft: something other than a busy deck said no.
+        internal static bool LastRefusalWasVeto;
 
         // Any hangar free for this airframe that is not marked to refuse AI
         // spawns (Aryx's FS-41 carriers mark their parking hangars so, and
@@ -301,6 +304,7 @@ namespace NOrders
         public static bool Launch(Airbase deck, LoadoutPlan plan, string callsign, string wing, out string reason)
         {
             LastRefusalWasBusy = false;
+            LastRefusalWasVeto = false;
             if (deck == null || deck.disabled) { reason = "No flight deck or field."; return false; }
             Ship ship = Airfields.ShipOf(deck);
             if (ship != null ? !CommandableShip.CanCommand(ship, out reason) : !Airfields.CanCommand(deck, out reason))
@@ -385,6 +389,7 @@ namespace NOrders
                 // busy -- the Penumbra builds on its lifts only -- and the game
                 // still counts them as able to. Busy, not impossible.
                 LastRefusalWasBusy = true;
+                LastRefusalWasVeto = true;
                 reason = "No hangar would take it just now.";
                 return false;
             }

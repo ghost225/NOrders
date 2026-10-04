@@ -18,6 +18,7 @@ namespace NOrders
     {
         internal const int MaxWing = 4;
         private const float GiveUpSeconds = 900f;
+        private const int VetoesToDrop = 3;
 
         internal sealed class Entry
         {
@@ -27,6 +28,7 @@ namespace NOrders
             internal string Wing;           // the wing's: "Viper 1"; null for a single
             internal float QueuedAt;
             internal bool NotedBusy;
+            internal int Vetoes;            // refusals with a hangar free, in a row
         }
 
         private static readonly List<Entry> queue = new List<Entry>();
@@ -116,8 +118,20 @@ namespace NOrders
                 }
                 // Refused only because nothing would take it this moment: wait
                 // for a lift or hangar, as for one the game says is busy.
+                // Refused again and again with a hangar free and nothing in
+                // its way: not a busy deck but a veto. High Command's lore
+                // mode refuses AI spawns of types a side does not fly, and
+                // our launches are AI spawns. Without this the launch sat in
+                // the queue as "waiting for a hangar" for fifteen minutes.
+                else if (CarrierOps.LastRefusalWasVeto && ++entry.Vetoes >= VetoesToDrop)
+                {
+                    DropFrom(i, entry, "the game refused it with a hangar free · another mod bars this airframe here " +
+                        "(High Command's lore mode bars a side from types it does not fly)");
+                    i--;
+                }
                 else if (CarrierOps.LastRefusalWasBusy)
                 {
+                    if (!CarrierOps.LastRefusalWasVeto) entry.Vetoes = 0;
                     if (!entry.NotedBusy)
                     {
                         entry.NotedBusy = true;
