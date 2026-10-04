@@ -46,11 +46,25 @@ namespace NOrders
             // state has moved on: Mallet, a Vagrant, pulled off after its
             // four rockets and went back on station still putting the rest of
             // the pod into the list. Cleared, the ripple ends.
+            // But what our own laser-guided rounds are flying at stays on it:
+            // the designator lases what is on the list, and the spot has to
+            // hold until they land.
             try
             {
-                if (aircraft.weaponManager != null && aircraft.weaponManager.GetTargetList().Count > 0)
+                List<Unit> list = aircraft.weaponManager != null ? aircraft.weaponManager.GetTargetList() : null;
+                if (list != null && list.Count > 0)
                 {
-                    aircraft.weaponManager.GetTargetList().Clear();
+                    var lasing = new List<Unit>();
+                    foreach (Missile missile in MissileIndex.From(aircraft))
+                    {
+                        if (missile == null || missile.disabled) continue;
+                        WeaponInfo info = missile.GetWeaponInfo();
+                        if (info == null || !info.laserGuided) continue;
+                        if (UnitRegistry.TryGetUnit(missile.targetID, out Unit aimed) && aimed != null && !lasing.Contains(aimed)) lasing.Add(aimed);
+                        else if (flight.Target != null && !lasing.Contains(flight.Target)) lasing.Add(flight.Target);
+                    }
+                    list.Clear();
+                    list.AddRange(lasing);
                     aircraft.weaponManager.TargetListChanged();
                 }
             }
@@ -1353,6 +1367,15 @@ namespace NOrders
                 FlyGlideDrop(pilot, target, glideTo, station);
                 return;
             }
+            // A laser-guided round (not a bomb) with a spot to guide on: ours
+            // to launch on the cockpit's own cue.
+            if (weapon != null && weapon.laserGuided && !weapon.bomb && !weapon.glideBomb && station.Ammo > 0 &&
+                !Host.Dead(target) && hq != null && FlightOrders.CanLase(aircraft, target) &&
+                hq.TryGetKnownPosition(target, out GlobalPosition lasedAt))
+            {
+                FlyLaserLaunch(pilot, target, lasedAt, station);
+                return;
+            }
             if (weapon != null && weapon.missile && !weapon.laserGuided && !weapon.bomb && station.Ammo > 0 &&
                 !Host.Dead(target) && hq != null && hq.TryGetKnownPosition(target, out GlobalPosition seen))
             {
@@ -1971,6 +1994,101 @@ namespace NOrders
             }
             if (station.Ammo <= 0) flight.SalvoLeft = 0;
             if (saturation != null) flight.SalvoLeft = StrikePlans.SaturationRounds(aircraft, saturation);
+        }
+
+        // A laser-guided round on the cockpit's own cue (HUDLaserGuidedState):
+        // inside the round's kinematic range for this speed and these
+        // heights (Missile.CalcRange, what the HUD's MAX shows) and outside
+        // its minimum; the target inside the ring -- min(alignment limit,
+        // 0.002 degrees a metre of range) off the nose; and lased. The
+        // target goes on the list well before, so the designator (which
+        // lases whatever is on it, in range and in sight, at any angle) has
+        // the spot on as it arrives. The rounds wanted go one at a time; the
+        // egress follows, and the target stays on the list (EnterState keeps
+        // it while our laser rounds fly) so the spot holds until impact.
+        // Handed to the combat pilot instead, the jet was taken back the
+        // moment the first round left, the list cleared, and the rounds flew
+        // on blind.
+        private float laserMax = -1f, laserMaxAt = -10f;
+        private bool laserNotLasedSaid;
+
+        private void FlyLaserLaunch(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station)
+        {
+            WeaponInfo info = station.WeaponInfo;
+            TargetRequirements needs = info.targetRequirements;
+            GlobalPosition here = aircraft.GlobalPosition();
+            float dist = FastMath.Distance(known, here);
+            float now = Time.timeSinceLevelLoad;
+            if (now - laserMaxAt >= 1f)
+            {
+                laserMaxAt = now;
+                Missile prefab = info.weaponPrefab != null ? info.weaponPrefab.GetComponent<Missile>() : null;
+                laserMax = needs.maxRange;
+                try { if (prefab != null) laserMax = prefab.CalcRange(aircraft.speed, here.y, known.y, dist, 0f, out _); } catch { }
+                if (laserMax <= 0f) laserMax = needs.maxRange;
+            }
+            if (dist < needs.minRange * 1.1f) { CompleteRunIn(pilot, "inside minimum range"); return; }
+
+            // The spot on ahead of the shot: the target on the list once the
+            // round could nearly reach it.
+            List<Unit> targets = aircraft.weaponManager.GetTargetList();
+            if (dist < laserMax * 1.5f && (targets.Count != 1 || targets[0] != target))
+            {
+                targets.Clear();
+                targets.Add(target);
+                aircraft.weaponManager.TargetListChanged();
+            }
+
+            flight.Doing((dist > laserMax ? "LASER RUN · " : "LAUNCHING · ") + UnitConverter.DistanceReading(dist) +
+                " · max " + UnitConverter.DistanceReading(laserMax));
+            if (dist > laserMax)
+            {
+                flight.InLaunchRangeSince = -1f;
+                Steer(known);
+                return;
+            }
+            if (flight.InLaunchRangeSince < 0f) flight.InLaunchRangeSince = now;
+            if (now - flight.InLaunchRangeSince > 60f) { CompleteRunIn(pilot, "no laser launch in a minute"); return; }
+
+            float corner = parameters != null ? parameters.cornerSpeed : 0f;
+            if (corner > 0f && aircraft.speed < corner * 1.15f && flight.SalvoLeft <= 0)
+            {
+                controlInputs.throttle = 1f; Reheat();
+                Steer(aircraft.GlobalPosition() + Flat(aircraft.transform.forward) * 5000f, default, 20f);
+                return;
+            }
+
+            Steer(known);
+            float off = Vector3.Angle(aircraft.transform.forward, known - here);
+            float align = needs.minAlignment > 0f ? needs.minAlignment : 30f;
+            float ring = Mathf.Min(align, Mathf.Max(dist, needs.minRange) * 0.002f);
+            bool lased = aircraft.NetworkHQ != null && aircraft.NetworkHQ.IsTargetLased(target);
+            if (!lased && !laserNotLasedSaid)
+            {
+                laserNotLasedSaid = true;
+                Tracing.Flight("[flight] " + flight.Name + " · in range of " + ShipNames.Of(target) + " but it is not lased yet · designator " +
+                    (aircraft.GetLaserDesignator() != null ? "aboard" : "none aboard"));
+            }
+            float interval = Mathf.Max(info.fireInterval, 0.4f);
+            if (off > ring || !lased || now - flight.LastLaunchAt < interval) return;
+            if (aircraft.speed < needs.minOwnerSpeed) return;
+
+            StrikeItem saturation = StrikePlans.SaturationOn(flight, target);
+            if (flight.SalvoLeft <= 0)
+                flight.SalvoLeft = saturation != null ? Mathf.Max(StrikePlans.SaturationRounds(aircraft, saturation), 1)
+                    : Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
+            aircraft.weaponManager.currentWeaponStation = station;
+            int before = station.Ammo;
+            pilot.Fire();
+            flight.LastLaunchAt = now;
+            if (station.Ammo < before)
+            {
+                flight.SalvoLeft--;
+                Tracing.Flight("[flight] " + flight.Name + " · launched " + info.weaponName + " at " + UnitConverter.DistanceReading(dist) +
+                    " (max " + UnitConverter.DistanceReading(laserMax) + "), " + off.ToString("0.0") + "° off in a " + ring.ToString("0.0") + "° ring, lased · " +
+                    Mathf.Max(flight.SalvoLeft, 0) + " left");
+            }
+            if (station.Ammo <= 0) flight.SalvoLeft = 0;
         }
 
         // Who in the wing takes the shot at this target: the first `shots`

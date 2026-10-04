@@ -1826,34 +1826,23 @@ namespace NOrders
             return best ?? fallback ?? gun;
         }
 
-        // Not yet away from the attack: a ripple still going out, or one of
-        // our laser-guided rounds still flying. The jet's designator lases
-        // whatever is on its target list, in range and in sight; taken back
-        // the moment the first round left, the list was cleared and the
-        // aircraft turned for home, and a Compass's Lynchpins flew on blind.
-        // The combat pilot keeps it meanwhile (it holds the attack while its
-        // laser rounds fly).
+        // Not yet away from the attack: a ripple still going out.
         private static readonly HashSet<Aircraft> notedDelivering = new HashSet<Aircraft>();
         internal static bool StillDelivering(Flight flight)
         {
             Aircraft aircraft = flight?.Aircraft;
             if (aircraft == null || aircraft.weaponStations == null) return false;
-            bool salvo = false, lased = false;
+            // Laser rounds no longer hold it: the egress keeps their target on
+            // the list (NavalPilotState.EnterState) and the designator lases
+            // at any angle.
+            bool salvo = false;
             foreach (WeaponStation station in aircraft.weaponStations)
                 if (station != null && station.SalvoInProgress) { salvo = true; break; }
-            if (!salvo)
-                foreach (Missile missile in MissileIndex.From(aircraft))
-                {
-                    if (missile == null || missile.disabled) continue;
-                    WeaponInfo info = null;
-                    try { info = missile.GetWeaponInfo(); } catch { }
-                    if (info != null && info.laserGuided) { lased = true; break; }
-                }
-            if (!salvo && !lased) { notedDelivering.Remove(aircraft); return false; }
+            if (!salvo) { notedDelivering.Remove(aircraft); return false; }
             if (notedDelivering.Add(aircraft))
             {
                 if (notedDelivering.Count > 200) notedDelivering.Clear();
-                Tracing.Flight("[flight] " + flight.Name + " · " + (salvo ? "salvo still going out" : "laser-guided rounds in flight") +
+                Tracing.Flight("[flight] " + flight.Name + " · " + "salvo still going out" +
                     " · holding the attack · designator " + (aircraft.GetLaserDesignator() != null ? "aboard" : "none aboard") +
                     (flight.Target != null && aircraft.NetworkHQ != null ? " · target " + (aircraft.NetworkHQ.IsTargetLased(flight.Target) ? "lased" : "NOT lased") : ""));
             }
