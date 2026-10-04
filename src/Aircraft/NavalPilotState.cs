@@ -1396,9 +1396,19 @@ namespace NOrders
 
             GlobalPosition here = aircraft.GlobalPosition();
             float range = Horizontal(known, here);
-            // A gun run: ours only as far as standoff distance, then the
-            // game's combat pilot flies the pass its own way.
-            if (weapon != null && weapon.gun && range < release) { CompleteRunIn(pilot, "native AI gun run"); return; }
+            // A gun run: the game's combat pilot's the moment the jet is
+            // pointed at the target (inside its own 20-degree attack cone),
+            // at any range -- as a landing is handed over. Until then our
+            // state only turns it toward the target.
+            if (weapon != null && weapon.gun)
+            {
+                Vector3 gunTrack = Flat(aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward);
+                Vector3 gunTo = known - here; gunTo.y = 0f;
+                if (gunTo.sqrMagnitude < 1f || Vector3.Angle(gunTrack, gunTo) <= GunHandoverCone) { CompleteRunIn(pilot, "native AI gun run"); return; }
+                flight.Doing("TURNING IN FOR THE GUN RUN · " + UnitConverter.DistanceReading(range));
+                Steer(known);
+                return;
+            }
             // Low enough, or simply looking down at the target at no more
             // than a shallow dive: the combat pilot shoots from there. Held
             // to the weapon's set height (300 m for rockets), a King Viper
@@ -1810,6 +1820,7 @@ namespace NOrders
                 if (FlightOrders.WeaponKey(other.WeaponInfo) == key) total += other.Ammo;
             return total;
         }
+        private const float GunHandoverCone = 20f;  // degrees: the combat pilot attacks what is inside this of its track
         private const float BankingTurn = 25f;      // degrees off asked for, at the least: past the autopilot's 20-degree yaw zone
         private const float BombLine = 8f;          // degrees off the target's bearing that counts as on the line
 

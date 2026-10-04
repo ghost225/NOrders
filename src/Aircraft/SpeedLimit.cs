@@ -44,6 +44,53 @@ namespace NOrders
         // run at 334 m/s, went in a few seconds after a pull-out at 510 m.
         private static readonly System.Collections.Generic.HashSet<Aircraft> pulling = new System.Collections.Generic.HashSet<Aircraft>();
 
+        // Ground ahead: the combat pilot dives on a low target and does not
+        // always come out -- a Vortex went into the ground at 449 m/s while
+        // "engaging". Inside a few seconds of impact at the present sink
+        // (earlier the faster it goes: a pull-out's radius grows with the
+        // square of the speed) the combat pilot is skipped for the frame and
+        // our pull-up flies instead -- wings toward level, nose up the way it
+        // is going, full power -- held until it is climbing. Run after the
+        // combat pilot, as first written, two autopilot calls a frame fought
+        // over the same controllers: the pull-up was weak or erratic, and
+        // Cleaver went in from 596 m.
+        private static bool Prefix(Pilot pilot)
+        {
+            if (!Guard.Ok(Name)) return true;
+            try
+            {
+                Aircraft aircraft = pilot?.aircraft;
+                if (aircraft == null || !(aircraft.autopilot is AutopilotPlane) || aircraft.rb == null) return true;
+                Flight flight = FlightOrders.Of(aircraft);
+                if (flight == null || Host.IsFlownByPlayer(flight)) return true;
+                float sink = -aircraft.rb.velocity.y;
+                float lookAhead = Mathf.Max(4f, aircraft.speed / 60f);
+                bool holding = pulling.Contains(aircraft);
+                if (holding && (aircraft.rb.velocity.y > 5f || aircraft.radarAlt > 1500f)) { pulling.Remove(aircraft); return true; }
+                if (!holding && !(sink > 15f && aircraft.radarAlt < sink * lookAhead + 150f)) return true;
+                if (!holding)
+                {
+                    if (pulling.Count > 200) pulling.Clear();
+                    pulling.Add(aircraft);
+                    if (Time.timeSinceLevelLoad >= groundNoteAt)
+                    {
+                        groundNoteAt = Time.timeSinceLevelLoad + 10f;
+                        Tracing.Flight("[flight] " + flight.Name + " · pulling out under the combat pilot · sinking " + sink.ToString("0") +
+                            " m/s at " + aircraft.radarAlt.ToString("0") + " m, " + aircraft.speed.ToString("0") + " m/s");
+                    }
+                }
+                Vector3 ahead = aircraft.rb.velocity; ahead.y = 0f;
+                if (ahead.sqrMagnitude < 1f) { ahead = aircraft.transform.forward; ahead.y = 0f; }
+                GlobalPosition up = aircraft.GlobalPosition() + ahead.normalized * 3000f + Vector3.up * 1200f;
+                ControlInputs inputs = aircraft.GetInputs();
+                if (inputs != null) inputs.throttle = 1f;
+                aircraft.autopilot.AutoAim(up, aimVelocity: true, ignoreCollisions: false, runwayAlign: false,
+                    effort: 1f, bankAllowed: 30f, followTerrain: false, altitudeHold: 300f, targetVelocity: Vector3.zero);
+                return false;
+            }
+            catch (Exception ex) { Guard.Failed(Name, ex); return true; }
+        }
+
         private static void Postfix(Pilot pilot)
         {
             if (!Guard.Ok(Name)) return;
@@ -70,38 +117,6 @@ namespace NOrders
                 {
                     noteAt = Time.timeSinceLevelLoad + 15f;
                     Tracing.Flight("[flight] " + flight.Name + " · overspeed in combat · " + aircraft.speed.ToString("0") + " m/s, power off");
-                }
-                // Ground ahead: the combat pilot dives on a low target and does
-                // not always come out -- a Vortex went into the ground at
-                // 449 m/s while "engaging". Under four seconds from impact at the
-                // present sink (or the terrain warning already sounding), our
-                // autopilot call replaces its inputs for the frame: wings toward
-                // level, nose up the way it is going, until it is climbing.
-                // (Sink rate and height only: the game's terrain warning is an
-                // exclusion-zone check, not a ground one.)
-                if (aircraft.rb != null)
-                {
-                    float sink = -aircraft.rb.velocity.y;
-                    // Earlier the faster it goes: a pull-out's radius grows
-                    // with the square of the speed.
-                    float lookAhead = Mathf.Max(4f, aircraft.speed / 60f);
-                    bool holding = pulling.Contains(aircraft);
-                    if (holding && (aircraft.rb.velocity.y > 5f || aircraft.radarAlt > 1500f)) { pulling.Remove(aircraft); holding = false; }
-                    if (holding || (sink > 15f && aircraft.radarAlt < sink * lookAhead + 150f))
-                    {
-                        if (pulling.Count > 200) pulling.Clear();
-                        pulling.Add(aircraft);
-                        Vector3 ahead = aircraft.rb.velocity; ahead.y = 0f;
-                        if (ahead.sqrMagnitude < 1f) ahead = aircraft.transform.forward; ahead.y = 0f;
-                        GlobalPosition up = aircraft.GlobalPosition() + ahead.normalized * 3000f + Vector3.up * 1200f;
-                        aircraft.autopilot.AutoAim(up, aimVelocity: true, ignoreCollisions: false, runwayAlign: false,
-                            effort: 1f, bankAllowed: 30f, followTerrain: true, altitudeHold: 300f, targetVelocity: Vector3.zero);
-                        if (Time.timeSinceLevelLoad >= groundNoteAt)
-                        {
-                            groundNoteAt = Time.timeSinceLevelLoad + 10f;
-                            Tracing.Flight("[flight] " + flight.Name + " · pulled out under the combat pilot · sinking " + sink.ToString("0") + " m/s at " + aircraft.radarAlt.ToString("0") + " m");
-                        }
-                    }
                 }
             }
             catch (Exception ex) { Guard.Failed(Name, ex); }
