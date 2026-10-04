@@ -42,7 +42,7 @@ namespace NOrders
         internal int SalvoLeft;             // missiles still to fire in a standoff launch before egress
         internal float LastLaunchAt = -10f;
         internal float InLaunchRangeSince = -1f;
-        public string PreferredWeapon;      // WeaponInfo.name, or null for whatever suits best
+        public string PreferredWeapon;      // WeaponKey, or null for whatever suits best
         public bool WarnedAboutTrack;
         public float StrikeStarted;
         // Whether the run-in is flown: set up at a height and range the chosen
@@ -867,7 +867,7 @@ namespace NOrders
                     {
                         WeaponInfo info = station.WeaponInfo;
                         if (info.bomb || info.glideBomb) continue;          // the likely culprit
-                        if (info.name == flight.PreferredWeapon) continue;  // already tried
+                        if (WeaponKey(info) == flight.PreferredWeapon || info.name == flight.PreferredWeapon) continue;  // already tried
                         if (WeaponOrders.Opportunity(info, flight.Target) <= 0.01f && !info.gun) continue;
                         alternative = station;
                         break;
@@ -878,7 +878,7 @@ namespace NOrders
                         Tracing.Flight("[flight] " + flight.Name + " · no release after " +
                             Tuning.StrikePatience.ToString("0") + " s, switching to " +
                             alternative.WeaponInfo.weaponName);
-                        Strike(flight, flight.Target, alternative.WeaponInfo.name);
+                        Strike(flight, flight.Target, WeaponKey(alternative.WeaponInfo));
                     }
                     else
                     {
@@ -1715,11 +1715,17 @@ namespace NOrders
             return result;
         }
 
+        // A weapon by what it is, not which pylon or pod variant carries it:
+        // every Lynchpin pod one weapon. The display name; the asset name
+        // where there is none.
+        public static string WeaponKey(WeaponInfo info) =>
+            info == null ? null : string.IsNullOrEmpty(info.weaponName) ? info.name : info.weaponName;
+
         internal static WeaponStation NamedStation(Aircraft aircraft, string weapon)
         {
             if (aircraft == null || string.IsNullOrEmpty(weapon)) return null;
             foreach (WeaponStation station in ArmedStations(aircraft))
-                if (station.WeaponInfo.name == weapon) return station;
+                if (WeaponKey(station.WeaponInfo) == weapon || station.WeaponInfo.name == weapon) return station;
             return null;
         }
 

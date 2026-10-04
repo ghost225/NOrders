@@ -663,7 +663,7 @@ namespace NOrders
 
         public static void SetMissilesPerTarget(Flight flight, int missiles)
         {
-            foreach (Flight member in Wings.Group(flight)) member.MissilesPerTarget = Mathf.Clamp(missiles, 0, 8);
+            foreach (Flight member in Wings.Group(flight)) member.MissilesPerTarget = Mathf.Clamp(missiles, 0, 30);
         }
 
         public static void SetRearmAtHome(Flight flight, bool rearm)

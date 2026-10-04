@@ -1636,7 +1636,7 @@ namespace NOrders
                 if (off > cone * 0.9f || Time.timeSinceLevelLoad - flight.LastLaunchAt < 2.5f) return;
                 if (aircraft.speed < needs.minOwnerSpeed) return;
 
-                if (flight.SalvoLeft <= 0) flight.SalvoLeft = Mathf.Clamp(allowed - closing, 1, Mathf.Max(station.Ammo, 1));
+                if (flight.SalvoLeft <= 0) flight.SalvoLeft = Mathf.Clamp(allowed - closing, 1, Mathf.Max(KindAmmo(station), 1));
                 aircraft.weaponManager.currentWeaponStation = station;
                 List<Unit> targets = aircraft.weaponManager.GetTargetList();
                 targets.Clear();
@@ -1652,7 +1652,7 @@ namespace NOrders
                     Tracing.Flight("[flight] " + flight.Name + " · launched " + info.weaponName + " at " + (range / 1000f).ToString("0.0") +
                         " km from " + aircraft.radarAlt.ToString("0") + " m · " + Mathf.Max(flight.SalvoLeft, 0) + " left in the salvo");
                 }
-                if (station.Ammo <= 0 || flight.SalvoLeft <= 0)
+                if (KindAmmo(station) <= 0 || flight.SalvoLeft <= 0)
                 {
                     if (FlightOrders.StartCrank(flight, info)) return;
                     if (SlowAirTarget(target)) { FlightOrders.EgressNow(flight); return; }
@@ -1693,7 +1693,7 @@ namespace NOrders
             if (!GlideReach(aircraft, info, known) || Time.timeSinceLevelLoad - flight.LastLaunchAt < 2f) return;
             StrikeItem saturation = StrikePlans.SaturationOn(flight, target);
             if (saturation != null) flight.SalvoLeft = Mathf.Max(StrikePlans.SaturationRounds(aircraft, saturation), 1);
-            else if (flight.SalvoLeft <= 0) flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
+            else if (flight.SalvoLeft <= 0) flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(KindAmmo(station), 1));
             aircraft.weaponManager.currentWeaponStation = station;
             List<Unit> targets = aircraft.weaponManager.GetTargetList();
             targets.Clear();
@@ -1711,7 +1711,7 @@ namespace NOrders
             }
             // A saturation carries on with its next weapon; the egress follows the last.
             if (saturation != null) { flight.SalvoLeft = StrikePlans.SaturationRounds(aircraft, saturation); return; }
-            if (station.Ammo <= 0 || flight.SalvoLeft <= 0) CompleteRunIn(pilot, "glide bombs away");
+            if (KindAmmo(station) <= 0 || flight.SalvoLeft <= 0) CompleteRunIn(pilot, "glide bombs away");
         }
 
         // Unguided (level) bombs, released by us: at the flight's height,
@@ -1799,6 +1799,17 @@ namespace NOrders
         // On a strike, firmer still: at 25 degrees a Vagrant run-in circled
         // the target at 7.5 km for a minute before coming round.
         private const float StrikeTurn = 50f;
+        // Rounds of this weapon left across every station carrying it: a
+        // salvo runs on from one pod to the next of the same weapon.
+        private int KindAmmo(WeaponStation station)
+        {
+            if (station?.WeaponInfo == null) return 0;
+            string key = FlightOrders.WeaponKey(station.WeaponInfo);
+            int total = 0;
+            foreach (WeaponStation other in FlightOrders.ArmedStations(aircraft))
+                if (FlightOrders.WeaponKey(other.WeaponInfo) == key) total += other.Ammo;
+            return total;
+        }
         private const float BankingTurn = 25f;      // degrees off asked for, at the least: past the autopilot's 20-degree yaw zone
         private const float BombLine = 8f;          // degrees off the target's bearing that counts as on the line
 
@@ -1846,7 +1857,7 @@ namespace NOrders
             }
 
             if (flight.BombsThisPass == 0)
-                flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
+                flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(KindAmmo(station), 1));
             aircraft.weaponManager.currentWeaponStation = station;
             List<Unit> targets = aircraft.weaponManager.GetTargetList();
             targets.Clear();
@@ -1864,7 +1875,7 @@ namespace NOrders
                         aircraft.radarAlt.ToString("0") + " m at " + aircraft.speed.ToString("0") + " m/s · predicted " +
                         along.ToString("0") + " m along, " + across.ToString("0") + " m across · locked on " + ShipNames.Of(target));
             }
-            if (station.Ammo <= 0 || flight.SalvoLeft <= 0)
+            if (KindAmmo(station) <= 0 || flight.SalvoLeft <= 0)
             {
                 flight.BombRun = false;
                 CompleteRunIn(pilot, flight.BombsThisPass + " bomb(s) away");
@@ -1976,7 +1987,7 @@ namespace NOrders
             if (saturation != null && (!station.Ready() || station.SalvoInProgress)) return;
 
             if (flight.SalvoLeft <= 0)
-                flight.SalvoLeft = Mathf.Clamp(Mathf.CeilToInt(info.CalcAttacksNeeded(target)), 1, Mathf.Max(station.Ammo, 1));
+                flight.SalvoLeft = Mathf.Clamp(Mathf.CeilToInt(info.CalcAttacksNeeded(target)), 1, Mathf.Max(KindAmmo(station), 1));
 
             aircraft.weaponManager.currentWeaponStation = station;
             List<Unit> targets = aircraft.weaponManager.GetTargetList();
@@ -1994,7 +2005,7 @@ namespace NOrders
                     (range / 1000f).ToString("0.0") + " km from " + aircraft.radarAlt.ToString("0") + " m · " +
                     Mathf.Max(flight.SalvoLeft, 0) + " left in the salvo");
             }
-            if (station.Ammo <= 0) flight.SalvoLeft = 0;
+            if (KindAmmo(station) <= 0) flight.SalvoLeft = 0;
             if (saturation != null) flight.SalvoLeft = StrikePlans.SaturationRounds(aircraft, saturation);
         }
 
@@ -2013,6 +2024,11 @@ namespace NOrders
         // on blind.
         private float laserMax = -1f, laserMaxAt = -10f;
         private bool laserNotLasedSaid, laserOpening;
+        private float laserHoldSaidAt = -10f;
+        private bool laserDiving;
+        private float laserDive;                    // degrees: the dive angle being flown, eased toward the target's
+        private const float LaserDiveRate = 4f;     // degrees a second the dive steepens by
+        private const float LaserLineUp = 12f;      // degrees off the target's bearing before the push-over starts
         private const float MaxLaserDive = 35f;     // degrees down to the target, at most, to start the dive
         private const float LaserDiveFloor = 400f;  // m over the ground: no lower in the dive without a shot away
 
@@ -2031,7 +2047,13 @@ namespace NOrders
                 try { if (prefab != null) laserMax = prefab.CalcRange(aircraft.speed, here.y, known.y, dist, 0f, out _); } catch { }
                 if (laserMax <= 0f) laserMax = needs.maxRange;
             }
-            if (dist < needs.minRange * 1.1f) { CompleteRunIn(pilot, "inside minimum range"); return; }
+            // Inside minimum range: round again, not the combat pilot -- handed
+            // over at 550 m a Vagrant circled close in at the target's guns.
+            if (dist < needs.minRange * 1.1f && !laserOpening)
+            {
+                laserOpening = true;
+                Tracing.Flight("[flight] " + flight.Name + " · inside minimum range for the laser run · opening out");
+            }
 
             // The spot on ahead of the shot: the target on the list once the
             // round could nearly reach it.
@@ -2050,23 +2072,31 @@ namespace NOrders
             // in and high), it opens out and comes back.
             Vector3 flatTo = known - here; flatTo.y = 0f;
             float depression = Mathf.Atan2(here.y - known.y, Mathf.Max(flatTo.magnitude, 1f)) * Mathf.Rad2Deg;
+            // Opening out: back toward the edge of range and back up to a
+            // height to dive from (at the ordered height, climbing on the
+            // way), then in again. Ended on the angle alone, a jet pulled off
+            // low turned straight back in, still low.
             if (laserOpening)
             {
-                if (dist >= laserMax * 0.85f || depression <= MaxLaserDive * 0.6f) laserOpening = false;
+                float climbTo = Mathf.Min(Mathf.Max(flight.Altitude, LaserDiveFloor), LaserDiveFloor * 2.5f);
+                if (dist >= laserMax * 0.85f && aircraft.radarAlt >= climbTo * 0.9f) laserOpening = false;
                 else
                 {
+                    laserDiving = false;
                     flight.Doing("OPENING OUT FOR THE LASER RUN · " + UnitConverter.DistanceReading(dist));
                     Vector3 away = Flat(here - known);
                     Steer(here + away * 5000f);
                     return;
                 }
             }
-            // Low in the dive without a shot (not lased, say): off and round
-            // again rather than pressing at the ground.
-            if (dist <= laserMax && aircraft.radarAlt < LaserDiveFloor && flight.SalvoLeft <= 0)
+            // Low in the dive (not lased, not in the ring, a round still to
+            // go): off and round again rather than pressing at the ground. The
+            // rounds still owed carry over to the next pass.
+            if (dist <= laserMax && aircraft.radarAlt < LaserDiveFloor)
             {
                 laserOpening = true;
-                Tracing.Flight("[flight] " + flight.Name + " · down to " + aircraft.radarAlt.ToString("0") + " m in the laser dive without a shot · pulling off");
+                Tracing.Flight("[flight] " + flight.Name + " · down to " + aircraft.radarAlt.ToString("0") + " m in the laser dive" +
+                    (flight.SalvoLeft > 0 ? " with " + flight.SalvoLeft + " still to fire" : " without a shot") + " · pulling off");
                 return;
             }
             if (dist <= laserMax && depression > MaxLaserDive && flight.SalvoLeft <= 0)
@@ -2081,6 +2111,7 @@ namespace NOrders
             if (dist > laserMax)
             {
                 flight.InLaunchRangeSince = -1f;
+                laserDiving = false;
                 Steer(known);
                 return;
             }
@@ -2095,10 +2126,21 @@ namespace NOrders
                 return;
             }
 
-            // Nose on the target itself (the steering point sits at the
-            // minimum clearance over it).
+            // Nose onto the target, smoothly. Dropping the steering point
+            // straight to the target the moment it came in range pushed the
+            // nose over at negative g, jerkily. Now the push-over waits until
+            // the jet is turned onto the target, then the dive angle grows
+            // from the present flight path at a few degrees a second to the
+            // angle down to the target; the steering point's height follows it.
+            Vector3 trackFlat = Flat(aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward);
+            float lateral = Vector3.Angle(trackFlat, flatTo);
+            float path = aircraft.rb != null && aircraft.speed > 1f ? -Mathf.Asin(Mathf.Clamp(aircraft.rb.velocity.y / aircraft.speed, -1f, 1f)) * Mathf.Rad2Deg : 0f;
+            if (!laserDiving) { laserDiving = true; laserDive = Mathf.Max(path, 0f); }
+            float wantDive = lateral < LaserLineUp ? depression : Mathf.Min(laserDive, depression);
+            laserDive = Mathf.MoveTowards(laserDive, wantDive, LaserDiveRate * Time.fixedDeltaTime);
+            float aimAbove = here.y - flatTo.magnitude * Mathf.Tan(laserDive * Mathf.Deg2Rad) - known.y;
             float ordered = flight.Altitude;
-            flight.Altitude = 0f;
+            flight.Altitude = Mathf.Max(aimAbove, 0f);
             Steer(known);
             flight.Altitude = ordered;
             float off = Vector3.Angle(aircraft.transform.forward, known - here);
@@ -2112,13 +2154,25 @@ namespace NOrders
                     (aircraft.GetLaserDesignator() != null ? "aboard" : "none aboard"));
             }
             float interval = Mathf.Max(info.fireInterval, 0.4f);
-            if (off > ring || !lased || now - flight.LastLaunchAt < interval) return;
-            if (aircraft.speed < needs.minOwnerSpeed) return;
+            bool ready = station.Ready() && !station.SalvoInProgress;
+            if (off > ring || !lased || !ready || aircraft.speed < needs.minOwnerSpeed)
+            {
+                // In range and not firing: say why, now and then.
+                if (now - flight.LastLaunchAt > 3f && now - laserHoldSaidAt > 5f)
+                {
+                    laserHoldSaidAt = now;
+                    Tracing.Flight("[flight] " + flight.Name + " · laser run holding · " + off.ToString("0.0") + "° off in a " + ring.ToString("0.0") + "° ring · " +
+                        (lased ? "lased" : "NOT lased") + " · station " + (ready ? "ready" : station.SalvoInProgress ? "mid-salvo" : "not ready") +
+                        " · " + station.Ammo + " in this station, " + KindAmmo(station) + " of the kind · " + UnitConverter.DistanceReading(dist) + " at " + aircraft.radarAlt.ToString("0") + " m");
+                }
+                return;
+            }
+            if (now - flight.LastLaunchAt < interval) return;
 
             StrikeItem saturation = StrikePlans.SaturationOn(flight, target);
             if (flight.SalvoLeft <= 0)
                 flight.SalvoLeft = saturation != null ? Mathf.Max(StrikePlans.SaturationRounds(aircraft, saturation), 1)
-                    : Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
+                    : Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(KindAmmo(station), 1));
             aircraft.weaponManager.currentWeaponStation = station;
             int before = station.Ammo;
             pilot.Fire();
@@ -2130,7 +2184,7 @@ namespace NOrders
                     " (max " + UnitConverter.DistanceReading(laserMax) + "), " + off.ToString("0.0") + "° off in a " + ring.ToString("0.0") + "° ring, lased · " +
                     Mathf.Max(flight.SalvoLeft, 0) + " left");
             }
-            if (station.Ammo <= 0) flight.SalvoLeft = 0;
+            if (KindAmmo(station) <= 0) flight.SalvoLeft = 0;
         }
 
         // Who in the wing takes the shot at this target: the first `shots`

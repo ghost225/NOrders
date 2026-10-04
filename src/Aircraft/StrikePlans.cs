@@ -6,7 +6,7 @@ using UnityEngine;
 namespace NOrders
 {
     // One target in a strike plan, and the weapon chosen for it (a
-    // WeaponInfo name; null lets the flight choose).
+    // WeaponKey -- the weapon, whatever pylon carries it; null lets the flight choose).
     public sealed class StrikeItem
     {
         public Unit Target;
@@ -22,7 +22,7 @@ namespace NOrders
         // Whether this weapon is one the saturation fires.
         public bool Fires(WeaponInfo info) =>
             info != null && (info.missile || info.glideBomb) && !info.bomb &&
-            (Weapons.Count > 0 ? Weapons.Contains(info.name) : info.effectiveness.antiSurface > 0f || info.effectiveness.antiRadar > 0f);
+            (Weapons.Count > 0 ? Weapons.Contains(FlightOrders.WeaponKey(info)) : info.effectiveness.antiSurface > 0f || info.effectiveness.antiRadar > 0f);
     }
 
     // Strike planning: targets gathered first, the strike sent only when
@@ -97,8 +97,8 @@ namespace NOrders
                 foreach (WeaponStation station in FlightOrders.ArmedStations(member.Aircraft))
                 {
                     if (!Counted(station.WeaponInfo)) continue;
-                    left.TryGetValue(station.WeaponInfo.name, out int n);
-                    left[station.WeaponInfo.name] = n + station.Ammo;
+                    left.TryGetValue(FlightOrders.WeaponKey(station.WeaponInfo), out int n);
+                    left[FlightOrders.WeaponKey(station.WeaponInfo)] = n + station.Ammo;
                 }
             foreach (StrikeItem item in PlanOf(lead))
             {
@@ -107,7 +107,7 @@ namespace NOrders
                     bool fired = false;
                     foreach (Flight member in members)
                         foreach (WeaponStation st in FlightOrders.ArmedStations(member.Aircraft))
-                            if (item.Fires(st.WeaponInfo) && left.ContainsKey(st.WeaponInfo.name) && left[st.WeaponInfo.name] > 0) { left[st.WeaponInfo.name] = 0; fired = true; }
+                            if (item.Fires(st.WeaponInfo) && left.ContainsKey(FlightOrders.WeaponKey(st.WeaponInfo)) && left[FlightOrders.WeaponKey(st.WeaponInfo)] > 0) { left[FlightOrders.WeaponKey(st.WeaponInfo)] = 0; fired = true; }
                     if (!fired) unreached?.Add(item);
                     continue;
                 }
@@ -115,7 +115,7 @@ namespace NOrders
                 Flight by = null;
                 foreach (Flight member in members) if ((station = StationFor(member, item)) != null) { by = member; break; }
                 if (station == null || !Counted(station.WeaponInfo)) continue;
-                string key = station.WeaponInfo.name;
+                string key = FlightOrders.WeaponKey(station.WeaponInfo);
                 if (!byWeapon.TryGetValue(key, out Shortfall f))
                 {
                     left.TryGetValue(key, out int carried);
@@ -227,7 +227,7 @@ namespace NOrders
                 foreach (WeaponStation station in FlightOrders.ArmedStations(member.Aircraft))
                 {
                     if (station.Ammo <= 0 || !item.Fires(station.WeaponInfo)) continue;
-                    string name = station.WeaponInfo.weaponName ?? station.WeaponInfo.name;
+                    string name = FlightOrders.WeaponKey(station.WeaponInfo);
                     load.TryGetValue(name, out int n);
                     load[name] = n + station.Ammo;
                 }
@@ -293,8 +293,8 @@ namespace NOrders
                 var rounds = new Dictionary<string, int>();
                 foreach (WeaponStation station in FlightOrders.ArmedStations(member.Aircraft))
                 {
-                    rounds.TryGetValue(station.WeaponInfo.name, out int n);
-                    rounds[station.WeaponInfo.name] = n + (Counted(station.WeaponInfo) ? station.Ammo : 2);
+                    rounds.TryGetValue(FlightOrders.WeaponKey(station.WeaponInfo), out int n);
+                    rounds[FlightOrders.WeaponKey(station.WeaponInfo)] = n + (Counted(station.WeaponInfo) ? station.Ammo : 2);
                 }
                 budget[member] = rounds;
             }
@@ -314,7 +314,7 @@ namespace NOrders
                         lists[member].Add(item);
                         any = true;
                         foreach (WeaponStation carried in FlightOrders.ArmedStations(member.Aircraft))
-                            if (item.Fires(carried.WeaponInfo)) budget[member][carried.WeaponInfo.name] = 0;
+                            if (item.Fires(carried.WeaponInfo)) budget[member][FlightOrders.WeaponKey(carried.WeaponInfo)] = 0;
                     }
                     if (!any) skipped++;
                     continue;
@@ -329,7 +329,7 @@ namespace NOrders
                 {
                     WeaponStation candidate = StationFor(member, item);
                     if (candidate == null) continue;
-                    budget[member].TryGetValue(candidate.WeaponInfo.name, out int have);
+                    budget[member].TryGetValue(FlightOrders.WeaponKey(candidate.WeaponInfo), out int have);
                     carriers.Add((member, candidate, have));
                 }
                 if (carriers.Count == 0) { skipped++; continue; }
@@ -345,7 +345,7 @@ namespace NOrders
                     lists[c.member].Add(item);
                     given++;
                     int share = counted ? Mathf.Min(Mathf.Max(c.have, 0), need) : 1;
-                    budget[c.member][c.station.WeaponInfo.name] = c.have - share;
+                    budget[c.member][FlightOrders.WeaponKey(c.station.WeaponInfo)] = c.have - share;
                     need -= counted ? Mathf.Max(share, 1) : need;
                 }
             }
@@ -593,7 +593,7 @@ namespace NOrders
             {
                 Unit target = item.Target;
                 if (Host.Dead(target) || room <= 0) continue;
-                if (item.Saturate ? !item.Fires(info) : !string.IsNullOrEmpty(item.Weapon) && item.Weapon != info.name) continue;   // saved for its own weapon
+                if (item.Saturate ? !item.Fires(info) : !string.IsNullOrEmpty(item.Weapon) && item.Weapon != FlightOrders.WeaponKey(info)) continue;   // saved for its own weapon
                 if (!hq.TryGetKnownPosition(target, out GlobalPosition known)) continue;
                 Vector3 to = known - aircraft.GlobalPosition();
                 if (reach > 0f && to.magnitude > reach) continue;
