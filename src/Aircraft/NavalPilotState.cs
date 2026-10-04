@@ -1407,7 +1407,13 @@ namespace NOrders
                 // A straight run needs room to settle on the line before handover.
                 float outward = straight ? 1.8f : 1.3f;
                 GlobalPosition setUp = known + friendly.normalized * release * outward;
-                if (Horizontal(setUp, here) < 1500f || (low && range >= release * (outward - 0.15f)))
+                // Arrived means within a steering point's distance: the point
+                // is never closer than MinSteerDistance, and a jet circling
+                // near its set-up point could never get inside 1.5 km of it.
+                // A Compass orbited a radar truck at 6.5-7.7 km at 6 g for
+                // most of a minute, just short of 1.15 x the Lynchpin's
+                // release range, until the strike was ordered again.
+                if (Horizontal(setUp, here) < MinSteerDistance || (low && range >= release))
                 {
                     flight.SettingUp = false;
                     Tracing.Flight("[flight] " + flight.Name + " · turning in for the run");
@@ -1701,8 +1707,8 @@ namespace NOrders
         // flight turns onto the target and the bomb run (FlyLevelDrop) takes
         // it from there. Too close to line up before the bombs' forward throw
         // -- how far ahead they would land, released now -- it opens out
-        // toward friendly lines by that throw, a turn and a kilometre, and
-        // comes round.
+        // toward friendly lines by that throw, a reversal and a kilometre,
+        // and comes round.
         private void FlyBombRunIn(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station)
         {
             if (flight.BombRun && station.Ammo > 0) { FlyLevelDrop(pilot, target, known, station); return; }
@@ -1710,14 +1716,20 @@ namespace NOrders
             GlobalPosition here = aircraft.GlobalPosition();
             float range = Horizontal(known, here);
             float forward = Horizontal(BombImpact(aircraft, station.WeaponInfo, known.y), here);
-            float turn = aircraft.speed * aircraft.speed / (9.81f * 3f);        // a 3 g turn's radius
+            float turn = aircraft.speed * aircraft.speed / (9.81f * 4.5f);      // a 4.5 g turn's radius
             Vector3 toTarget = known - here; toTarget.y = 0f;
             Vector3 track = Flat(aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward);
             // Flat() is already a unit vector: tested against 1 it read as
             // nothing, offTrack fell to 0 and a flight flying across the
             // target's bearing was "on the line" -- and overshot, every frame.
             float offTrack = toTarget.sqrMagnitude > 1f ? Vector3.Angle(track, toTarget) : 0f;
-            float room = forward + turn + 1000f;
+            // Room to come round onto the line: the bombs' throw, and a turn's
+            // worth for however far off the bearing it is (two radii for a
+            // reversal), and a little to settle. The same measure decides
+            // both when it is too close and when it has opened out enough, so
+            // the one cannot undo the other.
+            float Need(float off) => forward + 2f * turn * Mathf.Clamp01(off / 180f) + 500f;
+            float room = Need(180f) + 500f;
 
             if (!flight.SettingUp)
             {
@@ -1731,7 +1743,7 @@ namespace NOrders
                     FlyLevelDrop(pilot, target, known, station);
                     return;
                 }
-                if (range < room * (offTrack > BombLine ? offTrack / 90f + 0.3f : 1f))
+                if (range < Need(offTrack))
                 {
                     flight.SettingUp = true;
                     Tracing.Flight("[flight] " + flight.Name + " · too close to line up the bombs (" + offTrack.ToString("0") + "° off, " +
@@ -1747,8 +1759,8 @@ namespace NOrders
                 if (friendly.sqrMagnitude < 1f) friendly = here - known;
                 friendly.y = 0f;
                 if (friendly.sqrMagnitude < 1f) friendly = -aircraft.transform.forward;
-                GlobalPosition setUp = known + friendly.normalized * (room + 1000f);
-                if (Horizontal(setUp, here) < 1500f || range >= room + 500f)
+                GlobalPosition setUp = known + friendly.normalized * (room + 1500f);
+                if (range >= room)
                 {
                     flight.SettingUp = false;
                     Tracing.Flight("[flight] " + flight.Name + " · turning in for the bomb run");
