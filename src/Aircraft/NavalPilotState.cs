@@ -1065,7 +1065,16 @@ namespace NOrders
                         float fast = top > 0f ? Mathf.InverseLerp(0.55f * top, 0.85f * top, aircraft.speed) : 0f;
                         float maxDown = Mathf.Max(Mathf.Lerp(MaxSteerDescent, 3f, fast), unloadTo);
                         float low = Mathf.Max(from.y - run * Mathf.Tan(maxDown * Mathf.Deg2Rad), groundFloor);
-                        float high = Mathf.Max(from.y + run * Mathf.Tan(MaxSteerClimb * Mathf.Deg2Rad), groundFloor);
+                        // And the climb allowed grows with the speed in hand
+                        // over the slow bar: a degree just out of recovery, the
+                        // full twenty from 1.6 times it. Allowed twenty at any
+                        // speed, a loaded A-19 climbed until slow, levelled to
+                        // recover, and pulled up again, five times on the way to
+                        // 3,000 m; now it climbs as steeply as its speed holds.
+                        float climb = MaxSteerClimb;
+                        float slowBar = SlowBar();
+                        if (slowBar > 0f) climb = Mathf.Lerp(1f, MaxSteerClimb, Mathf.InverseLerp(slowBar * 1.12f, slowBar * 1.6f, aircraft.speed));
+                        float high = Mathf.Max(from.y + run * Mathf.Tan(climb * Mathf.Deg2Rad), groundFloor);
                         float y = Mathf.Clamp(point.y, low, high);
                         // And fast, never under 300 m over the ground by steering:
                         // the evasion code owns the deck, not a transit.
