@@ -1000,6 +1000,13 @@ namespace NOrders
                     if (flight.Mode == FlightMode.Formation) bySpeed *= 1.5f;
                     else lateral = Mathf.Min(lateral, bySpeed);
                     if (flight.Mode == FlightMode.Formation) lateral = bySpeed;
+                    // But never under the autopilot's rudder threshold with
+                    // the speed to turn: inside 20 degrees of its point it
+                    // yaws rather than banks, and capped at 8-15 degrees at
+                    // strike speeds every line-up was flown flat on the
+                    // rudder. The G limit (GLimitPatch) keeps the bank honest.
+                    else if (parameters != null && aircraft.speed >= parameters.cornerSpeed)
+                        lateral = Mathf.Max(lateral, BankingTurn);
                     if (track.sqrMagnitude > 1f && toward.sqrMagnitude > 1f && Vector3.Angle(track, toward) > lateral)
                     {
                         float side = Mathf.Sign(Vector3.SignedAngle(track, toward, Vector3.up));
@@ -1333,7 +1340,13 @@ namespace NOrders
 
             GlobalPosition here = aircraft.GlobalPosition();
             float range = Horizontal(known, here);
-            bool low = aircraft.radarAlt <= height + Mathf.Max(250f, height * 0.25f);
+            // Low enough, or simply looking down at the target at no more
+            // than a shallow dive: the combat pilot shoots from there. Held
+            // to the weapon's set height (300 m for rockets), a King Viper
+            // reaching range at 870 m opened out and circled, again and again.
+            float above = here.y - known.y;
+            bool low = aircraft.radarAlt <= height + Mathf.Max(250f, height * 0.25f) ||
+                (range > 1f && Mathf.Atan2(above, range) * Mathf.Rad2Deg <= ShallowDive);
             if (Time.timeSinceLevelLoad - flight.RunInStarted > 240f) { CompleteRunIn(pilot, "run-in timed out"); return; }
 
             // For a straight run: how far the track is off the target's bearing.
@@ -1711,6 +1724,8 @@ namespace NOrders
             flight.Doing(flight.SettingUp ? "SETTING UP THE RUN" : "RUNNING IN · " + UnitConverter.DistanceReading(range));
             Steer(aim);
         }
+        private const float ShallowDive = 25f;      // degrees down to the target the combat pilot is handed a run at
+        private const float BankingTurn = 25f;      // degrees off asked for, at the least: past the autopilot's 20-degree yaw zone
         private const float BombLine = 8f;          // degrees off the target's bearing that counts as on the line
 
         private void FlyLevelDrop(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station)
