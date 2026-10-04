@@ -2012,7 +2012,9 @@ namespace NOrders
         // moment the first round left, the list cleared, and the rounds flew
         // on blind.
         private float laserMax = -1f, laserMaxAt = -10f;
-        private bool laserNotLasedSaid;
+        private bool laserNotLasedSaid, laserOpening;
+        private const float MaxLaserDive = 35f;     // degrees down to the target, at most, to start the dive
+        private const float LaserDiveFloor = 400f;  // m over the ground: no lower in the dive without a shot away
 
         private void FlyLaserLaunch(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station)
         {
@@ -2041,6 +2043,39 @@ namespace NOrders
                 aircraft.weaponManager.TargetListChanged();
             }
 
+            // The ring is off the nose, so the nose goes down onto the target
+            // once in range: flown level at 2.5-3 km, a Vagrant had its
+            // truck 26 degrees below the nose, outside an 8-degree ring, and
+            // overflew it without a shot. Too steep for a sane dive (close
+            // in and high), it opens out and comes back.
+            Vector3 flatTo = known - here; flatTo.y = 0f;
+            float depression = Mathf.Atan2(here.y - known.y, Mathf.Max(flatTo.magnitude, 1f)) * Mathf.Rad2Deg;
+            if (laserOpening)
+            {
+                if (dist >= laserMax * 0.85f || depression <= MaxLaserDive * 0.6f) laserOpening = false;
+                else
+                {
+                    flight.Doing("OPENING OUT FOR THE LASER RUN · " + UnitConverter.DistanceReading(dist));
+                    Vector3 away = Flat(here - known);
+                    Steer(here + away * 5000f);
+                    return;
+                }
+            }
+            // Low in the dive without a shot (not lased, say): off and round
+            // again rather than pressing at the ground.
+            if (dist <= laserMax && aircraft.radarAlt < LaserDiveFloor && flight.SalvoLeft <= 0)
+            {
+                laserOpening = true;
+                Tracing.Flight("[flight] " + flight.Name + " · down to " + aircraft.radarAlt.ToString("0") + " m in the laser dive without a shot · pulling off");
+                return;
+            }
+            if (dist <= laserMax && depression > MaxLaserDive && flight.SalvoLeft <= 0)
+            {
+                laserOpening = true;
+                Tracing.Flight("[flight] " + flight.Name + " · too steep for the laser run (" + depression.ToString("0") + "° down at " +
+                    UnitConverter.DistanceReading(dist) + ") · opening out");
+                return;
+            }
             flight.Doing((dist > laserMax ? "LASER RUN · " : "LAUNCHING · ") + UnitConverter.DistanceReading(dist) +
                 " · max " + UnitConverter.DistanceReading(laserMax));
             if (dist > laserMax)
@@ -2060,7 +2095,12 @@ namespace NOrders
                 return;
             }
 
+            // Nose on the target itself (the steering point sits at the
+            // minimum clearance over it).
+            float ordered = flight.Altitude;
+            flight.Altitude = 0f;
             Steer(known);
+            flight.Altitude = ordered;
             float off = Vector3.Angle(aircraft.transform.forward, known - here);
             float align = needs.minAlignment > 0f ? needs.minAlignment : 30f;
             float ring = Mathf.Min(align, Mathf.Max(dist, needs.minRange) * 0.002f);
