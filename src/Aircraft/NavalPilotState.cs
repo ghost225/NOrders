@@ -1325,6 +1325,11 @@ namespace NOrders
                 CompleteRunIn(pilot, "no run-in needed");
                 return;
             }
+            if (flight.BombRun && station.Ammo > 0 && straight)
+            {
+                FlyLevelDrop(pilot, target, known, station, height);
+                return;
+            }
 
             GlobalPosition here = aircraft.GlobalPosition();
             float range = Horizontal(known, here);
@@ -1363,7 +1368,23 @@ namespace NOrders
                 }
                 else aim = setUp;
             }
-            else if (low && lined && range < release) { CompleteRunIn(pilot, straight ? "lined up" : "in position"); return; }
+            else if (low && lined && range < release)
+            {
+                // Unguided bombs: ours to release. Handed over lined up, the
+                // combat pilot flew to the release point and circled back
+                // without dropping, lap after lap.
+                if (straight)
+                {
+                    flight.BombRun = true;
+                    flight.BombsThisPass = 0;
+                    Tracing.Flight("[flight] " + flight.Name + " · lined up · bomb run from " + UnitConverter.DistanceReading(range) +
+                        " at " + aircraft.radarAlt.ToString("0") + " m");
+                    FlyLevelDrop(pilot, target, known, station, height);
+                    return;
+                }
+                CompleteRunIn(pilot, "in position");
+                return;
+            }
 
             flight.Doing(flight.SettingUp ? "SETTING UP THE RUN" : "RUNNING IN · " + UnitConverter.DistanceReading(range));
             float ordered = flight.Altitude;
@@ -1629,6 +1650,112 @@ namespace NOrders
             // A saturation carries on with its next weapon; the egress follows the last.
             if (saturation != null) { flight.SalvoLeft = StrikePlans.SaturationRounds(aircraft, saturation); return; }
             if (station.Ammo <= 0 || flight.SalvoLeft <= 0) CompleteRunIn(pilot, "glide bombs away");
+        }
+
+        // Unguided (level) bombs, released by us: level at bombing height,
+        // flown at the target, each bomb's fall worked out the way the
+        // cockpit's CCIP pipper works it -- the aircraft's velocity, a small
+        // push down off the rack, gravity and the bomb's own drag -- and the
+        // bombs released, a short stick, as that impact point reaches the
+        // target. Bombs steer a little in the last of their fall, so close is
+        // close enough. Overflown with nothing away, it comes round again.
+        private const float BombLead = 60f;         // release this far short, so a stick straddles it
+        private const float BombWindow = 200f;      // and still this far past
+        private const float BombCross = 150f;       // off to the side, at most
+        private const float BombInterval = 0.25f;
+
+        private void FlyLevelDrop(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station, float height)
+        {
+            WeaponInfo info = station.WeaponInfo;
+            if (Time.timeSinceLevelLoad - flight.RunInStarted > 300f) { flight.BombRun = false; CompleteRunIn(pilot, "bomb run timed out"); return; }
+            GlobalPosition here = aircraft.GlobalPosition();
+            Vector3 track = Flat(aircraft.rb != null ? aircraft.rb.velocity : aircraft.transform.forward);
+            if (track.sqrMagnitude < 1f) track = Flat(aircraft.transform.forward);
+            track.Normalize();
+
+            GlobalPosition impact = BombImpact(aircraft, info, known.y);
+            Vector3 miss = impact - known; miss.y = 0f;
+            float along = Vector3.Dot(miss, track);                 // + : falling past the target
+            Vector3 side = miss - track * along;
+            float across = side.magnitude;
+
+            flight.Doing("BOMB RUN · " + UnitConverter.DistanceReading(Horizontal(known, here)));
+            // Steer the fall onto the target rather than the nose: aim off by
+            // however far to the side the bombs would land.
+            float ordered = flight.Altitude;
+            flight.Altitude = height;
+            Steer(known - side);
+            flight.Altitude = ordered;
+
+            if (along > BombWindow)
+            {
+                flight.BombRun = false;
+                if (flight.BombsThisPass > 0) { CompleteRunIn(pilot, flight.BombsThisPass + " bomb(s) away"); return; }
+                flight.SettingUp = true;
+                Tracing.Flight("[flight] " + flight.Name + " · bomb run overshot (" + across.ToString("0") + " m off the line) · coming round");
+                return;
+            }
+            if (along < -BombLead || across > BombCross || Time.timeSinceLevelLoad - flight.LastLaunchAt < BombInterval) return;
+
+            if (flight.BombsThisPass == 0)
+                flight.SalvoLeft = Mathf.Clamp(ShotDisciplinePatch.AllowedOn(flight, target, info), 1, Mathf.Max(station.Ammo, 1));
+            aircraft.weaponManager.currentWeaponStation = station;
+            List<Unit> targets = aircraft.weaponManager.GetTargetList();
+            targets.Clear();
+            targets.Add(target);
+            aircraft.weaponManager.TargetListChanged();
+            int before = station.Ammo;
+            pilot.Fire();
+            flight.LastLaunchAt = Time.timeSinceLevelLoad;
+            if (station.Ammo < before)
+            {
+                flight.SalvoLeft--;
+                flight.BombsThisPass++;
+                if (flight.BombsThisPass == 1)
+                    Tracing.Flight("[flight] " + flight.Name + " · bombs away · " + (info.weaponName ?? "bomb") + " from " +
+                        aircraft.radarAlt.ToString("0") + " m at " + aircraft.speed.ToString("0") + " m/s · predicted " +
+                        along.ToString("0") + " m along, " + across.ToString("0") + " m across");
+            }
+            if (station.Ammo <= 0 || flight.SalvoLeft <= 0)
+            {
+                flight.BombRun = false;
+                CompleteRunIn(pilot, flight.BombsThisPass + " bomb(s) away");
+            }
+        }
+
+        // Where a bomb released now comes down at this height: the cockpit
+        // CCIP's own model (HUDBombingState.CCIPTrajectory), in even steps.
+        private static readonly Dictionary<WeaponInfo, float> bombDrag = new Dictionary<WeaponInfo, float>();
+        internal static GlobalPosition BombImpact(Aircraft aircraft, WeaponInfo info, float groundY)
+        {
+            if (!bombDrag.TryGetValue(info, out float drag))
+            {
+                drag = 0f;
+                try
+                {
+                    Missile prefab = info.weaponPrefab != null ? info.weaponPrefab.GetComponent<Missile>() : null;
+                    if (prefab != null && info.massPerRound > 0f)
+                        drag = 0.5f * prefab.GetDragCoef(Mathf.PI / 360f) * prefab.GetFinArea() / info.massPerRound;
+                }
+                catch { drag = 0f; }
+                bombDrag[info] = drag;
+            }
+            GlobalPosition p = aircraft.GlobalPosition() - Vector3.up * aircraft.definition.spawnOffset.y;
+            float k = drag * LevelInfo.GetAirDensity(p.y);
+            Vector3 v = aircraft.rb.velocity - Vector3.up * 9.81f * 0.25f + info.muzzleVelocity * aircraft.transform.forward;
+            const float dt = 0.1f;
+            for (int i = 0; i < 1200; i++)
+            {
+                GlobalPosition next = p + v * dt;
+                if (next.y <= groundY)
+                {
+                    float t = (p.y - groundY) / Mathf.Max(p.y - next.y, 0.001f);
+                    return p + v * dt * t;
+                }
+                p = next;
+                v -= (Vector3.up * 9.81f + v.normalized * k * v.sqrMagnitude) * dt;
+            }
+            return p;
         }
 
         private void FlyStandoffLaunch(Pilot pilot, Unit target, GlobalPosition known, WeaponStation station)

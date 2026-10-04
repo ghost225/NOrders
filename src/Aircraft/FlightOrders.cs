@@ -50,6 +50,8 @@ namespace NOrders
         public bool RunInDone;
         public float RunInStarted;
         public bool SettingUp;              // opening out toward friendly lines to come round for the run
+        public bool BombRun;                // lined up with unguided bombs: our own release, not the combat pilot's
+        public int BombsThisPass;
         public int StrikeStartAmmo = -1;
         public FlightMode PreviousMode = FlightMode.Orbit;
         public FlightRoe Roe = FlightRoe.Tight;
@@ -1298,6 +1300,7 @@ namespace NOrders
             flight.StrikeStartAmmo = TotalAmmo(flight.Aircraft);
             flight.RunInDone = false;
             flight.SettingUp = false;
+            flight.BombRun = false;
             flight.RunInStarted = Time.timeSinceLevelLoad;
             flight.SalvoLeft = 0;
             flight.PassFirstShot = 0f;
