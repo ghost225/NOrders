@@ -24,6 +24,7 @@ namespace NOrders
             var state = new NavalPilotState { flight = flight, stateDisplayName = Host.ModName };
             state.Initialize(pilot);
             pilot.SwitchStateNew(state);
+            TurretRules.LogOnce(pilot.aircraft);
             Host.LogInfo("[flight] " + flight.Name + " under command · " + flight.Describe() + " · from " +
                 (pilot.currentState?.GetType().Name ?? "none") + " · alt " + pilot.aircraft.radarAlt.ToString("0") +
                 " m · speed " + pilot.aircraft.speed.ToString("0") + " m/s" + Speeds(pilot.aircraft));

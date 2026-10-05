@@ -50,9 +50,11 @@ namespace NOrders
         // May this shot leave the ship? Anything we did not order, from a ship
         // under command, has to satisfy the rules of engagement -- this
         // weapon's own, if it has them, or the ship's.
-        internal static bool Allows(Unit owner, Unit target, Weapon weapon = null)
+        internal static bool Allows(Unit owner, Unit target, Weapon weapon = null, WeaponStation station = null)
         {
             if (ShipWeapons.Firing) return true;              // our own explicit order
+            // An aircraft's turret: its flight's rules (TurretRules).
+            if (owner is Aircraft aircraft) return TurretRules.Allows(aircraft, target, station);
             if (!(owner is Ship ship)) return true;
             var state = ship.GetComponent<ShipEngagement>();
             if (state == null) return true;
@@ -128,10 +130,10 @@ namespace NOrders
         // calls the first one firingUnit, not owner -- and Harmony binds
         // prefix arguments by name, so naming them fails on exactly the
         // subclasses this patch exists to catch.
-        private static bool Prefix(Weapon __instance, Unit __0, Unit __1)
+        private static bool Prefix(Weapon __instance, Unit __0, Unit __1, WeaponStation __3)
         {
             if (!Guard.Ok(Name)) return true;                 // never hold fire on a broken rule
-            try { return NuclearRelease.Allows(__instance, __0) && EngagementPolicy.Allows(__0, __1, __instance); }
+            try { return NuclearRelease.Allows(__instance, __0) && EngagementPolicy.Allows(__0, __1, __instance, __3); }
             catch (Exception ex) { Guard.Failed(Name, ex); return true; }
         }
 

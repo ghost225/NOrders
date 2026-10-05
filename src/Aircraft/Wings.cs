@@ -661,6 +661,18 @@ namespace NOrders
             Host.Say((lead.Wing ?? lead.Name) + " · " + n + " aircraft airdropping along the line");
         }
 
+        // A turret weapon's own rules of engagement, over the flight's, for the
+        // whole wing; null follows the flight.
+        public static void SetTurretMode(Flight flight, string key, EngagementMode? mode)
+        {
+            if (key == null) return;
+            foreach (Flight member in Wings.Group(flight))
+            {
+                if (mode.HasValue) member.TurretModes[key] = mode.Value;
+                else member.TurretModes.Remove(key);
+            }
+        }
+
         public static void SetMissilesPerTarget(Flight flight, int missiles)
         {
             foreach (Flight member in Wings.Group(flight)) member.MissilesPerTarget = Mathf.Clamp(missiles, 0, 30);

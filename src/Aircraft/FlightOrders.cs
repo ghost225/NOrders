@@ -54,6 +54,11 @@ namespace NOrders
         public int BombsThisPass;
         public bool NotedNoLock;
         public bool NotedRoundsFlying;
+        // Turrets: rules of their own per weapon (WeaponKey), over the flight's;
+        // the sweep's clock; when a turret strike began firing.
+        public readonly Dictionary<string, EngagementMode> TurretModes = new Dictionary<string, EngagementMode>();
+        public float NextTurretSweep;
+        public float TurretFiringSince = -1f;
         public int StrikeStartAmmo = -1;
         public FlightMode PreviousMode = FlightMode.Orbit;
         public FlightRoe Roe = FlightRoe.Tight;
@@ -339,9 +344,9 @@ namespace NOrders
                 foreach (WeaponStation station in Aircraft.weaponStations)
                 {
                     if (station?.WeaponInfo == null || station.Ammo <= 0) continue;
-                    parts.Add(station.WeaponInfo.shortName is string shortName && shortName.Length > 0
+                    parts.Add((station.WeaponInfo.shortName is string shortName && shortName.Length > 0
                         ? shortName + " " + station.Ammo
-                        : station.WeaponInfo.weaponName + " " + station.Ammo);
+                        : station.WeaponInfo.weaponName + " " + station.Ammo) + (station.HasTurret() ? " (turret)" : ""));
                 }
                 return parts.Count == 0 ? "no stores" : string.Join(", ", parts.ToArray());
             }
@@ -350,11 +355,11 @@ namespace NOrders
         // Whatever the standing task is, what it is doing right now comes first.
         // What it is doing this moment, ahead of its standing task: shot at,
         // fighting back and at what, the stage of an attack, forming up.
-        // The combat pilot has a gun pass: its own, with nothing of ours on it.
-        private bool GunRun()
+        // The native pilot is working a turret weapon (a helicopter's gunship pass).
+        private bool OnTurret()
         {
             WeaponStation current = Aircraft != null && Aircraft.weaponManager != null ? Aircraft.weaponManager.currentWeaponStation : null;
-            return current?.WeaponInfo != null && current.WeaponInfo.gun;
+            return current != null && current.HasTurret();
         }
 
         public string Status
@@ -367,7 +372,7 @@ namespace NOrders
                     return fighting == null ? "ENGAGING"
                         : (Attackers.ContainsKey(fighting) ? "ATTACKING ATTACKER · " : "ENGAGING · ") + ShipNames.Of(fighting);
                 if (Mode == FlightMode.Strike && RunInDone && fighting != null)
-                    return (GunRun() ? "NATIVE AI GUN RUN · " : "ATTACKING · ") + ShipNames.Of(fighting) + ListProgress();
+                    return (OnTurret() ? "GUNSHIP · " : "ATTACKING · ") + ShipNames.Of(fighting) + ListProgress();
                 if (activity != null && Time.timeSinceLevelLoad < activityUntil) return activity + (Mode == FlightMode.Strike ? ListProgress() : "");
                 if (Mode == FlightMode.Egress) return (Cranking ? "CRANKING" : "EGRESSING") + ListProgress();
                 if (Mode == FlightMode.Orbit && StrikeList.Count > 0) return "HOLDING · missiles on the way" + ListProgress();
@@ -726,6 +731,7 @@ namespace NOrders
             foreach (Flight flight in flights)
             {
                 flight.RefreshStores();
+                TurretRules.Tick(flight);
                 // A dogleg home reached (the route ends in an orbit at its last
                 // leg), or the flight retasked meanwhile: the landing, or nothing.
                 if (flight.HomingVia.HasValue)
@@ -897,7 +903,7 @@ namespace NOrders
                     int now = TotalAmmo(flight.Aircraft);
                     // On a strike list, the other weapons' targets reachable
                     // from here go on the same pass before it turns away.
-                    if (now >= 0 && now < flight.AmmoAtAttack && !StillDelivering(flight) && !StrikePlans.FollowUp(flight)) Egress(flight);
+                    if (now >= 0 && now < flight.AmmoAtAttack && !StillDelivering(flight) && !TurretStrikeHolds(flight) && !StrikePlans.FollowUp(flight)) Egress(flight);
                 }
 
                 if (flight.Mode == FlightMode.Egress && flight.Cranking)
@@ -1326,6 +1332,7 @@ namespace NOrders
             flight.PreferredWeapon = preferredWeapon;
             flight.WarnedAboutTrack = false;
             flight.StrikeStarted = Time.timeSinceLevelLoad;
+            flight.TurretFiringSince = -1f;
             flight.StrikeStartAmmo = TotalAmmo(flight.Aircraft);
             flight.RunInDone = false;
             flight.SettingUp = false;
@@ -1731,7 +1738,7 @@ namespace NOrders
             var result = new List<WeaponStation>();
             if (aircraft == null || aircraft.weaponStations == null) return result;
             foreach (WeaponStation station in aircraft.weaponStations)
-                if (station?.WeaponInfo != null && station.Ammo > 0) result.Add(station);
+                if (station?.WeaponInfo != null && station.Ammo > 0 && !TurretRules.OpportunisticOnly(aircraft, station)) result.Add(station);
             return result;
         }
 
@@ -1840,6 +1847,9 @@ namespace NOrders
             foreach (WeaponStation station in aircraft.weaponStations)
             {
                 if (station == null || station.WeaponInfo == null || station.Ammo <= 0) continue;
+                // A turret on a fixed-wing fires at what it can reach; no pilot
+                // flies a pass for it, so it is no strike weapon.
+                if (TurretRules.OpportunisticOnly(aircraft, station)) continue;
                 if (station.WeaponInfo.gun)
                 {
                     if (allowGun && gun == null) gun = station;
@@ -1880,6 +1890,26 @@ namespace NOrders
                     (flight.Target != null && aircraft.NetworkHQ != null ? " · target " + (aircraft.NetworkHQ.IsTargetLased(flight.Target) ? "lased" : "NOT lased") : ""));
             }
             return true;
+        }
+
+        // A turret strike is not over with its first burst. A helicopter's
+        // gunship pass fires continuously, and "rounds went down" is the rule
+        // that ends other strikes. Held while the turret still has ammo and the
+        // target stands, for Tuning.TurretStrikeSeconds from the first rounds.
+        internal static bool TurretStrikeHolds(Flight flight)
+        {
+            Aircraft aircraft = flight?.Aircraft;
+            if (aircraft == null || Host.Dead(flight.Target) || !IsRotary(FirstPilot(aircraft))) return false;
+            WeaponStation station = NamedStation(aircraft, flight.PreferredWeapon) ?? BestStationFor(aircraft, flight.Target);
+            if (station == null || !station.HasTurret() || station.Ammo <= 0) return false;
+            float now = Time.timeSinceLevelLoad;
+            if (flight.TurretFiringSince < 0f)
+            {
+                flight.TurretFiringSince = now;
+                Tracing.Flight("[flight] " + flight.Name + " · " + (station.WeaponInfo.weaponName ?? "turret") + " firing on " + ShipNames.Of(flight.Target) +
+                    " · gunship pass, held up to " + Tuning.TurretStrikeSeconds.ToString("0") + " s");
+            }
+            return now - flight.TurretFiringSince < Tuning.TurretStrikeSeconds;
         }
 
         // Any round this aircraft fired still in the air.

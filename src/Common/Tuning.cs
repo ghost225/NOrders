@@ -27,6 +27,7 @@ namespace NOrders
         public static float InfraredHandover = 2000f;
         public static float LowFuelAlert = 25f;
         public static float BombingHeight = 1500f;
+        public static float TurretStrikeSeconds = 90f;      // how long a helicopter's turret strike presses after the first rounds
         public static float CruiseThrottle = 0.8f;
         // A flight's default for home at a land airfield: rearm and go back
         // out (Turnaround), or park. Decks always park.
