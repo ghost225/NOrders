@@ -407,6 +407,8 @@ namespace NOrders
             // again when they have arrived.
             if (covered)
             {
+                if (flight.Mode != FlightMode.Orbit)
+                    Tracing.Flight("[flight] " + flight.Name + " · every target on the list already has missiles on the way · holding where it is");
                 if (flight.Mode != FlightMode.Orbit) { flight.OrbitCentre = flight.Aircraft.GlobalPosition(); flight.Mode = FlightMode.Orbit; flight.Adopted = false; }
                 flight.StrikeListCheck = Time.timeSinceLevelLoad + 4f;
             }

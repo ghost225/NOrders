@@ -59,6 +59,11 @@ namespace NOrders
         public readonly Dictionary<string, EngagementMode> TurretModes = new Dictionary<string, EngagementMode>();
         public float NextTurretSweep;
         public float TurretFiringSince = -1f;
+        public int TurretAmmoAtStart = -1;      // rounds in the turret stations when the strike began
+        public float NextHeloTrace;
+        public FlightMode TracedMode = FlightMode.Route;
+        public bool ModeTraced;
+        public string LastHeloState;
         public int StrikeStartAmmo = -1;
         public FlightMode PreviousMode = FlightMode.Orbit;
         public FlightRoe Roe = FlightRoe.Tight;
@@ -732,6 +737,17 @@ namespace NOrders
             {
                 flight.RefreshStores();
                 TurretRules.Tick(flight);
+                HeloStrikeTrace(flight);
+                // Every change of mode, from wherever it came: a strike that falls
+                // back to its station with nothing logged could not be explained.
+                if (!flight.ModeTraced) { flight.ModeTraced = true; flight.TracedMode = flight.Mode; }
+                else if (flight.TracedMode != flight.Mode)
+                {
+                    Tracing.Flight("[flight] " + flight.Name + " · mode " + flight.TracedMode + " → " + flight.Mode +
+                        (flight.Aircraft != null ? " · " + flight.Aircraft.radarAlt.ToString("0") + " m, " + flight.Aircraft.speed.ToString("0") + " m/s" : "") +
+                        (flight.Target != null ? " · target " + ShipNames.Of(flight.Target) : ""));
+                    flight.TracedMode = flight.Mode;
+                }
                 // A dogleg home reached (the route ends in an orbit at its last
                 // leg), or the flight retasked meanwhile: the landing, or nothing.
                 if (flight.HomingVia.HasValue)
@@ -1333,6 +1349,7 @@ namespace NOrders
             flight.WarnedAboutTrack = false;
             flight.StrikeStarted = Time.timeSinceLevelLoad;
             flight.TurretFiringSince = -1f;
+            flight.TurretAmmoAtStart = TurretAmmo(flight.Aircraft);
             flight.StrikeStartAmmo = TotalAmmo(flight.Aircraft);
             flight.RunInDone = false;
             flight.SettingUp = false;
@@ -1896,11 +1913,20 @@ namespace NOrders
         // gunship pass fires continuously, and "rounds went down" is the rule
         // that ends other strikes. Held while the turret still has ammo and the
         // target stands, for Tuning.TurretStrikeSeconds from the first rounds.
+        //
+        // Only when the turret itself has fired. The first version took "the
+        // best station left" for the one in use: a Chicane that had spent its
+        // Eyeballs or its rocket pod fell back to the 30 mm as "best", the
+        // ammo drop read as the turret firing, and the egress was held for
+        // 90 s -- while the native pilot, its chosen station empty, went
+        // NoTarget and flew to the nearest base and landed.
         internal static bool TurretStrikeHolds(Flight flight)
         {
             Aircraft aircraft = flight?.Aircraft;
             if (aircraft == null || Host.Dead(flight.Target) || !IsRotary(FirstPilot(aircraft))) return false;
-            WeaponStation station = NamedStation(aircraft, flight.PreferredWeapon) ?? BestStationFor(aircraft, flight.Target);
+            if (flight.TurretAmmoAtStart < 0 || TurretAmmo(aircraft) >= flight.TurretAmmoAtStart) return false;
+            WeaponStation current = aircraft.weaponManager != null ? aircraft.weaponManager.currentWeaponStation : null;
+            WeaponStation station = NamedStation(aircraft, flight.PreferredWeapon) ?? current;
             if (station == null || !station.HasTurret() || station.Ammo <= 0) return false;
             float now = Time.timeSinceLevelLoad;
             if (flight.TurretFiringSince < 0f)
@@ -1910,6 +1936,59 @@ namespace NOrders
                     " · gunship pass, held up to " + Tuning.TurretStrikeSeconds.ToString("0") + " s");
             }
             return now - flight.TurretFiringSince < Tuning.TurretStrikeSeconds;
+        }
+
+        // What the native helicopter pilot is doing while a strike is on, every
+        // few seconds: its own mode, target, station and ammo, and how long it
+        // has been without a target (NoTarget flies to the nearest base and
+        // lands). The native state is private and quiet, so a helicopter that
+        // "heads for the nearest base" could not be told from a log.
+        private static readonly System.Reflection.FieldInfo HeloMode = HarmonyLib.AccessTools.Field(typeof(AIHeloCombatState), "combatMode");
+        private static readonly System.Reflection.FieldInfo HeloTarget = HarmonyLib.AccessTools.Field(typeof(AIHeloCombatState), "currentTarget");
+        private static readonly System.Reflection.FieldInfo HeloDist = HarmonyLib.AccessTools.Field(typeof(AIHeloCombatState), "targetDist");
+        private static readonly System.Reflection.FieldInfo HeloIdle = HarmonyLib.AccessTools.Field(typeof(AIHeloCombatState), "timeWithoutTarget");
+
+        internal static void HeloStrikeTrace(Flight flight)
+        {
+            if (!Tuning.FlightTrace || flight.Mode != FlightMode.Strike || flight.Aircraft == null) return;
+            float now = Time.timeSinceLevelLoad;
+            if (now < flight.NextHeloTrace) return;
+            flight.NextHeloTrace = now + 5f;
+            try
+            {
+                Pilot pilot = FirstPilot(flight.Aircraft);
+                if (pilot == null || !IsRotary(pilot)) return;
+                if (!(pilot.currentState is AIHeloCombatState state))
+                {
+                    string name = pilot.currentState?.GetType().Name ?? "none";
+                    if (name != flight.LastHeloState)
+                    {
+                        flight.LastHeloState = name;
+                        Tracing.Flight("[flight] " + flight.Name + " · strike on, but the pilot is in " + name + ", not the helicopter combat state");
+                    }
+                    return;
+                }
+                flight.LastHeloState = null;
+                Unit target = HeloTarget?.GetValue(state) as Unit;
+                WeaponStation station = flight.Aircraft.weaponManager != null ? flight.Aircraft.weaponManager.currentWeaponStation : null;
+                Tracing.Flight("[flight] " + flight.Name + " · helicopter pilot: " + (HeloMode?.GetValue(state) ?? "?") +
+                    " · target " + (target != null ? ShipNames.Of(target) : "NONE") + " (ordered " + ShipNames.Of(flight.Target) + ")" +
+                    " · station " + (station?.WeaponInfo?.weaponName ?? "none") + " " + (station != null ? station.Ammo.ToString() : "?") + " rds" +
+                    (station != null && station.HasTurret() ? " (turret)" : "") +
+                    " · " + (HeloDist?.GetValue(state) is float d && d < 1e6f ? UnitConverter.DistanceReading(d) : "?") +
+                    " · no target for " + (HeloIdle?.GetValue(state) is float t ? t.ToString("0") : "?") + " s" +
+                    " · " + flight.Aircraft.radarAlt.ToString("0") + " m, " + flight.Aircraft.speed.ToString("0") + " m/s");
+            }
+            catch (System.Exception ex) { Host.LogWarning("[flight] helicopter strike trace failed: " + ex.Message); }
+        }
+
+        internal static int TurretAmmo(Aircraft aircraft)
+        {
+            int total = 0;
+            if (aircraft == null || aircraft.weaponStations == null) return total;
+            foreach (WeaponStation station in aircraft.weaponStations)
+                if (station != null && station.HasTurret()) total += station.Ammo;
+            return total;
         }
 
         // Any round this aircraft fired still in the air.
